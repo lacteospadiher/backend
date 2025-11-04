@@ -1,0 +1,3024 @@
+-- =========================================================
+-- PADIHER CORE ESENCIAL (MySQL 8) - ONE-SHOT COMPLETO
+-- Esquema: padihersystem_lab
+-- =========================================================
+SET sql_notes=0;
+SET FOREIGN_KEY_CHECKS=0;
+
+DROP DATABASE IF EXISTS padihersystem_lab;
+CREATE DATABASE padihersystem_lab
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE padihersystem_lab;
+
+-- =========================
+-- 01) TABLAS (base primero)
+-- =========================
+
+/* ROLES */
+CREATE TABLE roles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL,
+  UNIQUE KEY ux_roles_nombre (nombre)
+) ENGINE=InnoDB;
+
+/* USUARIOS */
+CREATE TABLE usuarios (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  usuario VARCHAR(50) NOT NULL,
+  correo VARCHAR(100),
+  telefono VARCHAR(20),
+  contrasena VARCHAR(255) NOT NULL,
+  rol_id INT NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  eliminado TINYINT(1) NOT NULL DEFAULT 0,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  ultimo_login DATETIME NULL,
+  creado_por INT NULL,
+  CONSTRAINT fk_usuarios_rol    FOREIGN KEY (rol_id)    REFERENCES roles(id),
+  CONSTRAINT fk_usuarios_creado FOREIGN KEY (creado_por) REFERENCES usuarios(id)
+) ENGINE=InnoDB;
+CREATE UNIQUE INDEX ux_usuarios_usuario ON usuarios (usuario);
+CREATE INDEX ix_usuarios_rol ON usuarios (rol_id);
+
+/* AUDITORIA */
+CREATE TABLE auditoria (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT,
+  accion TEXT NOT NULL,
+  modulo VARCHAR(100),
+  origen VARCHAR(150),
+  ip VARCHAR(45),
+  user_agent VARCHAR(255),
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_auditoria_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_auditoria_usuario_fecha ON auditoria (usuario_id, fecha);
+
+/* ESTADOS / MUNICIPIOS / CATEGORIAS / ENVASE */
+CREATE TABLE estados (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY ux_estados_nombre (nombre)
+) ENGINE=InnoDB;
+
+CREATE TABLE municipios (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  estado_id INT NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY ux_municipios_nombre_estado (nombre, estado_id),
+  CONSTRAINT fk_municipios_estado FOREIGN KEY (estado_id) REFERENCES estados(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_municipios_estado ON municipios (estado_id);
+
+CREATE TABLE categorias_productos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  slug VARCHAR(120) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_catprod_slug (slug)
+) ENGINE=InnoDB;
+
+CREATE TABLE envase (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL,
+  descripcion VARCHAR(100),
+  UNIQUE KEY ux_tipocajas_nombre (nombre)
+) ENGINE=InnoDB;
+
+/* PRODUCTOS */
+CREATE TABLE productos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  categoria_id INT NOT NULL,
+  precio DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  precio_mayoreo DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  cantidad DECIMAL(10,3),
+  unidad_medida ENUM('kg','g','l','ml'),
+  color ENUM('blanco','amarillo'),
+  tipo_venta ENUM('kilo','pieza') NOT NULL DEFAULT 'pieza',
+  peso_gramos INT,
+  codigo VARCHAR(50),
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  eliminado TINYINT(1) NOT NULL DEFAULT 0,
+  fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_productos_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_productos(id)
+) ENGINE=InnoDB;
+CREATE UNIQUE INDEX ux_productos_codigo ON productos (codigo);
+CREATE INDEX ix_productos_categoria ON productos (categoria_id);
+
+/* CAMIONETAS / VENDEDORES / HISTORIAL */
+CREATE TABLE camionetas (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  placa VARCHAR(20) NOT NULL,
+  marca VARCHAR(50),
+  modelo VARCHAR(50),
+  color VARCHAR(30),
+  aseguradora VARCHAR(100),
+  seguro_vencimiento DATE,
+  kilometraje_actual INT,
+  mantenimiento_km INT,
+  ultimo_mantenimiento_km INT,
+  ultima_fecha_mantenimiento DATE,
+  tiene_refrigeracion TINYINT(1) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  eliminado TINYINT(1) NOT NULL DEFAULT 0,
+  fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_camionetas_placa (placa)
+) ENGINE=InnoDB;
+
+CREATE TABLE vendedores (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  firebase_uid VARCHAR(80) NULL,
+  id_estado INT,
+  id_municipio INT,
+  pricing_mode ENUM('normal','mayoreo') NOT NULL DEFAULT 'normal',
+  camioneta_id INT,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  eliminado TINYINT(1) NOT NULL DEFAULT 0,
+  fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_vendedores_usuario   FOREIGN KEY (id_usuario)   REFERENCES usuarios(id),
+  CONSTRAINT fk_vendedores_estado    FOREIGN KEY (id_estado)     REFERENCES estados(id),
+  CONSTRAINT fk_vendedores_municipio FOREIGN KEY (id_municipio)  REFERENCES municipios(id),
+  CONSTRAINT fk_vendedores_camioneta FOREIGN KEY (camioneta_id)  REFERENCES camionetas(id),
+  UNIQUE KEY ux_vendedores_usuario (id_usuario),
+  UNIQUE KEY ux_vendedores_firebase_uid (firebase_uid)
+) ENGINE=InnoDB;
+CREATE INDEX ix_vendedores_estado_mpio ON vendedores (id_estado, id_municipio);
+
+CREATE TABLE historial_asignaciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  camioneta_id INT NOT NULL,
+  vendedor_id INT NOT NULL,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_hist_camioneta FOREIGN KEY (camioneta_id) REFERENCES camionetas(id),
+  CONSTRAINT fk_hist_vendedor  FOREIGN KEY (vendedor_id)  REFERENCES vendedores(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_hist_camioneta_fecha ON historial_asignaciones (camioneta_id, fecha);
+CREATE INDEX ix_hist_vendedor_fecha  ON historial_asignaciones (vendedor_id,  fecha);
+
+/* CARGADORES (PIN) */
+CREATE TABLE cargadores (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  eliminado TINYINT(1) NOT NULL DEFAULT 0,
+  pin_hash VARCHAR(100),
+  pin_updated_by INT,
+  pin_updated_at DATETIME,
+  pin_intentos TINYINT,
+  pin_bloqueado_hasta DATETIME,
+  fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cargadores_usuario  FOREIGN KEY (id_usuario)     REFERENCES usuarios(id),
+  CONSTRAINT fk_cargadores_updater  FOREIGN KEY (pin_updated_by) REFERENCES usuarios(id),
+  UNIQUE KEY ux_cargadores_usuario (id_usuario)
+) ENGINE=InnoDB;
+
+/* CLIENTES */
+CREATE TABLE clientes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  clave VARCHAR(20),
+  codigo_qr VARCHAR(64),
+  id_usuario_creador INT,
+  nombre_empresa VARCHAR(100),
+  telefono VARCHAR(20),
+  correo VARCHAR(100),
+  permite_credito TINYINT(1),
+  requiere_factura TINYINT(1) NOT NULL DEFAULT 0,
+  dias_credito INT,
+  limite_credito_monto DECIMAL(12,2),
+  limite_creditos_abiertos INT,
+  calle_numero VARCHAR(100),
+  colonia VARCHAR(100),
+  codigo_postal VARCHAR(10),
+  latitud DECIMAL(10,7),
+  longitud DECIMAL(10,7),
+  id_estado INT,
+  id_municipio INT,
+  activo TINYINT(1) DEFAULT 1,
+  tipo_cliente VARCHAR(10) NOT NULL DEFAULT 'normal', -- normal|cadena (texto)
+  cadena VARCHAR(30),
+  pricing_mode ENUM('normal','mayoreo') DEFAULT 'normal',
+  eliminado TINYINT(1) DEFAULT 0,
+  fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_clientes_creador FOREIGN KEY (id_usuario_creador) REFERENCES usuarios(id),
+  CONSTRAINT fk_clientes_estado  FOREIGN KEY (id_estado)         REFERENCES estados(id),
+  CONSTRAINT fk_clientes_mpio    FOREIGN KEY (id_municipio)      REFERENCES municipios(id),
+  UNIQUE KEY ux_clientes_clave (clave),
+  UNIQUE KEY ux_clientes_codigo_qr (codigo_qr)
+) ENGINE=InnoDB;
+CREATE INDEX ix_clientes_usuario_fecha ON clientes (id_usuario_creador, fecha_registro);
+CREATE INDEX ix_clientes_qr            ON clientes (codigo_qr);
+CREATE INDEX ix_clientes_tipo          ON clientes (tipo_cliente);
+
+/* MANTENIMIENTOS CAMIONETAS */
+CREATE TABLE mantenimientos_camionetas (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_camioneta INT NOT NULL,
+  kilometraje INT,
+  descripcion TEXT,
+  tipo ENUM('preventivo','correctivo') NOT NULL,
+  costo DECIMAL(10,2),
+  responsable_externo VARCHAR(100),
+  id_usuario INT,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mant_camioneta FOREIGN KEY (id_camioneta) REFERENCES camionetas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mant_usuario   FOREIGN KEY (id_usuario)   REFERENCES usuarios(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_mant_camioneta_fecha ON mantenimientos_camionetas (id_camioneta, fecha);
+
+/* CARGAS */
+CREATE TABLE cargas (
+  id                   INT AUTO_INCREMENT PRIMARY KEY,
+  id_camioneta         INT NULL,
+  id_usuario           INT NULL,        -- quien registró
+  id_vendedor          INT NOT NULL,
+  fecha                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  procesada            TINYINT(1) NOT NULL DEFAULT 0,
+  lista_para_confirmar TINYINT(1) NOT NULL DEFAULT 0,
+  lista_para_procesar  TINYINT(1) NOT NULL DEFAULT 0,
+  observaciones        TEXT NULL,
+  pedido_id            INT NULL,
+  resumen_inventario_json JSON NULL,
+  envases_json               JSON NULL,
+  devoluciones_sistema_json  JSON NULL,
+  devoluciones_extras_json   JSON NULL,
+  faltantes_ruta_json        JSON NULL,
+  totales_json            JSON NULL,
+  totales_texto           TEXT NULL,
+  CONSTRAINT fk_cargas_camioneta FOREIGN KEY (id_camioneta) REFERENCES camionetas(id),
+  CONSTRAINT fk_cargas_usuario   FOREIGN KEY (id_usuario)   REFERENCES usuarios(id),
+  CONSTRAINT fk_cargas_vendedor  FOREIGN KEY (id_vendedor)  REFERENCES vendedores(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_cargas_vendedor_fecha ON cargas (id_vendedor, fecha);
+CREATE INDEX ix_cargas_proc_lpc_fecha ON cargas (procesada, lista_para_confirmar, fecha);
+CREATE INDEX ix_cargas_lpp ON cargas (lista_para_procesar, procesada, fecha);
+
+/* PEDIDOS + DETALLE HIST + DETALLE(CARGA) */
+CREATE TABLE pedidos (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor   INT NOT NULL,
+  id_camioneta  INT NULL,
+  fecha         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  total         DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  estado        ENUM('pendiente','enviado','entregado','cancelado') NOT NULL DEFAULT 'pendiente',
+  procesado     TINYINT(1) NOT NULL DEFAULT 0,
+  listo_para_pedido_gral TINYINT(1) NOT NULL DEFAULT 0,
+  lista_para_excel TINYINT(1) NOT NULL DEFAULT 0,
+  carga_id      INT NULL,
+  observaciones TEXT NULL,
+  pedido_especial TEXT NULL,
+  CONSTRAINT fk_pedidos_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id),
+  CONSTRAINT fk_pedidos_camioneta FOREIGN KEY (id_camioneta) REFERENCES camionetas(id),
+  CONSTRAINT fk_pedidos_carga    FOREIGN KEY (carga_id)    REFERENCES cargas(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_pedidos_vendedor ON pedidos (id_vendedor, fecha);
+CREATE INDEX ix_pedidos_procesado_fecha  ON pedidos (procesado, fecha);
+CREATE INDEX ix_pedidos_estado_procesado ON pedidos (estado, procesado);
+CREATE INDEX ix_pedidos_lppg ON pedidos (listo_para_pedido_gral, estado, procesado);
+
+CREATE TABLE pedido_detalle_hist (
+  id                  INT AUTO_INCREMENT PRIMARY KEY,
+  pedido_id           INT NOT NULL,
+  producto_id         INT NOT NULL,
+  nombre_producto     VARCHAR(150) NOT NULL,
+  cantidad_solicitada INT NOT NULL,
+  precio_unitario     DECIMAL(10,2) NOT NULL,
+  subtotal_solicitado DECIMAL(14,2) AS (cantidad_solicitada * precio_unitario) STORED,
+  creado_en           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_pdh_pedido_prod (pedido_id, producto_id),
+  KEY idx_pdh_pedido   (pedido_id),
+  KEY idx_pdh_producto (producto_id),
+  CONSTRAINT fk_pdh_pedido   FOREIGN KEY (pedido_id)   REFERENCES pedidos(id)   ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_pdh_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE detalle_pedido (
+  id                  INT AUTO_INCREMENT PRIMARY KEY,
+  carga_id            INT NOT NULL,
+  producto_id         INT NOT NULL,
+  nombre_producto     VARCHAR(150) NOT NULL,
+  cantidad_inicial    INT NOT NULL DEFAULT 0,
+  ventas              INT NOT NULL DEFAULT 0,
+  devoluciones        INT NOT NULL DEFAULT 0,
+  precio_unitario     DECIMAL(10,2) NOT NULL,
+  lista_para_procesar TINYINT(1) NOT NULL DEFAULT 0,
+  procesada           TINYINT(1) NOT NULL DEFAULT 0,
+  restante            INT AS (GREATEST(cantidad_inicial - ventas - devoluciones, 0)) STORED,
+  total_inicial       DECIMAL(14,2) AS (cantidad_inicial * precio_unitario) STORED,
+  total_vendido       DECIMAL(14,2) AS (ventas * precio_unitario) STORED,
+  creado_en           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en      TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_dp_carga    FOREIGN KEY (carga_id)   REFERENCES cargas(id)     ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_dp_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  UNIQUE KEY uq_dp_carga_producto (carga_id, producto_id),
+  INDEX idx_dp_carga (carga_id),
+  INDEX idx_dp_producto (producto_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+/* VENTAS + DETALLE + CRÉDITOS + PAGOS */
+CREATE TABLE ventas (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor  INT NOT NULL,
+  id_cliente   INT NULL,
+  total        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  tipo_pago    ENUM('contado','transferencia','credito') NOT NULL,
+  metodo_pago  ENUM('efectivo','transferencia') NULL,
+  es_cadena    TINYINT(1) NOT NULL DEFAULT 0,
+  excluir_corte TINYINT(1) NOT NULL DEFAULT 0,
+  procesada    TINYINT(1) NOT NULL DEFAULT 0,
+  fecha        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ventas_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id),
+  CONSTRAINT fk_ventas_cliente  FOREIGN KEY (id_cliente)  REFERENCES clientes(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_ventas_vend_proc        ON ventas (id_vendedor, procesada);
+CREATE INDEX ix_ventas_vendedor_fecha   ON ventas (id_vendedor, fecha);
+CREATE INDEX ix_ventas_cliente_fecha    ON ventas (id_cliente, fecha);
+CREATE INDEX ix_ventas_cliente_vend_fecha ON ventas (id_cliente, id_vendedor, fecha);
+CREATE INDEX ix_ventas_excluir_corte ON ventas (excluir_corte, id_vendedor, fecha);
+
+CREATE TABLE detalle_venta (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  id_venta    INT NOT NULL,
+  id_producto INT NOT NULL,
+  cantidad    DECIMAL(10,3) NOT NULL,
+  precio      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  CONSTRAINT fk_dv_venta    FOREIGN KEY (id_venta)   REFERENCES ventas(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_dv_producto FOREIGN KEY (id_producto) REFERENCES productos(id)
+) ENGINE=InnoDB;
+CREATE INDEX idx_detalle_venta_venta    ON detalle_venta (id_venta);
+CREATE INDEX idx_detalle_venta_producto ON detalle_venta (id_producto);
+
+CREATE TABLE creditos (
+  id       INT AUTO_INCREMENT PRIMARY KEY,
+  id_venta INT NOT NULL,
+  total    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  fecha_vencimiento DATE NULL,
+  saldo    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  ocultar_vendedor TINYINT(1) NOT NULL DEFAULT 0,
+  CONSTRAINT fk_creditos_venta FOREIGN KEY (id_venta) REFERENCES ventas(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE UNIQUE INDEX ux_creditos_venta ON creditos (id_venta);
+CREATE INDEX ix_creditos_fecha_venc ON creditos (fecha_vencimiento);
+CREATE INDEX ix_creditos_ocultar ON creditos (ocultar_vendedor, id_venta);
+
+CREATE TABLE pagos_credito (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  id_credito   INT NOT NULL,
+  monto        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  tipo_pago    ENUM('efectivo','transferencia') NOT NULL,
+  referencia   VARCHAR(120)  NULL,
+  observaciones VARCHAR(255) NULL,
+  procesado    TINYINT(1) NOT NULL DEFAULT 0,
+  fecha        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pc_credito FOREIGN KEY (id_credito) REFERENCES creditos(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE INDEX ix_pagos_credito_credito_fecha ON pagos_credito (id_credito, fecha);
+
+/* DESCUENTOS */
+CREATE TABLE descuentos_globales (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  porcentaje DECIMAL(5,2) NOT NULL,
+  fecha_inicio DATE NOT NULL,
+  fecha_fin DATE NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT ck_dg_pct CHECK (porcentaje >= 0 AND porcentaje <= 100),
+  CONSTRAINT ck_dg_fechas CHECK (fecha_fin >= fecha_inicio)
+) ENGINE=InnoDB;
+CREATE INDEX ix_dg_vig ON descuentos_globales (activo, fecha_inicio, fecha_fin);
+
+CREATE TABLE descuentos_cliente (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cliente_id INT NOT NULL,
+  porcentaje DECIMAL(5,2) NOT NULL,
+  fecha_inicio DATE NOT NULL,
+  fecha_fin DATE NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_dc_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+  CONSTRAINT ck_dc_pct CHECK (porcentaje >= 0 AND porcentaje <= 100),
+  CONSTRAINT ck_dc_fechas CHECK (fecha_fin >= fecha_inicio)
+) ENGINE=InnoDB;
+CREATE INDEX ix_dc_cliente ON descuentos_cliente (cliente_id);
+CREATE INDEX ix_dc_cliente_vig ON descuentos_cliente (cliente_id, activo, fecha_inicio, fecha_fin);
+
+CREATE TABLE descuentos_cliente_producto (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cliente_id INT NOT NULL,
+  producto_id INT NOT NULL,
+  porcentaje DECIMAL(5,2) NOT NULL,
+  fecha_inicio DATE NOT NULL,
+  fecha_fin DATE NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_dcp_cliente  FOREIGN KEY (cliente_id)  REFERENCES clientes(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_dcp_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
+  CONSTRAINT ck_dcp_pct CHECK (porcentaje >= 0 AND porcentaje <= 100),
+  CONSTRAINT ck_dcp_fechas CHECK (fecha_fin >= fecha_inicio)
+) ENGINE=InnoDB;
+CREATE INDEX ix_dcp_cli_prod ON descuentos_cliente_producto (cliente_id, producto_id);
+CREATE INDEX ix_dcp_cli_prod_vig ON descuentos_cliente_producto (cliente_id, producto_id, activo, fecha_inicio, fecha_fin);
+
+/* RUTAS */
+CREATE TABLE plantillas_ruta (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  nombre VARCHAR(100) NOT NULL DEFAULT 'Default',
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pr_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_pr_vendedor ON plantillas_ruta (id_vendedor, activo);
+
+CREATE TABLE plantilla_ruta_clientes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_plantilla INT NOT NULL,
+  dia_semana TINYINT NOT NULL,
+  id_cliente INT NOT NULL,
+  orden INT NOT NULL DEFAULT 1,
+  CONSTRAINT fk_prc_plantilla FOREIGN KEY (id_plantilla) REFERENCES plantillas_ruta(id) ON DELETE CASCADE,
+  CONSTRAINT fk_prc_cliente   FOREIGN KEY (id_cliente)   REFERENCES clientes(id),
+  UNIQUE KEY ux_prc_plantilla_dia_cliente (id_plantilla, dia_semana, id_cliente)
+) ENGINE=InnoDB;
+CREATE INDEX ix_prc_dia_orden ON plantilla_ruta_clientes (dia_semana, orden);
+
+CREATE TABLE rutas_diarias (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  fecha DATE NOT NULL,
+  estado ENUM('programada','en_curso','finalizada') NOT NULL DEFAULT 'programada',
+  regreso_confirmado TINYINT(1) NOT NULL DEFAULT 0,
+  inicio_en DATETIME NULL,
+  termino_en DATETIME NULL,
+  fecha_regreso DATETIME NULL,
+  observaciones TEXT NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_rd_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id),
+  UNIQUE KEY ux_rd_vendedor_fecha (id_vendedor, fecha)
+) ENGINE=InnoDB;
+CREATE INDEX ix_rd_estado_fecha ON rutas_diarias (estado, fecha);
+
+CREATE TABLE rutas_clientes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_ruta INT NOT NULL,
+  id_cliente INT NOT NULL,
+  orden INT NOT NULL DEFAULT 1,
+  scaneado TINYINT(1) NOT NULL DEFAULT 0,
+  fecha_scaneo DATETIME NULL,
+  CONSTRAINT fk_rc_ruta    FOREIGN KEY (id_ruta)    REFERENCES rutas_diarias(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rc_cliente FOREIGN KEY (id_cliente) REFERENCES clientes(id),
+  UNIQUE KEY ux_rc_ruta_cliente (id_ruta, id_cliente)
+) ENGINE=InnoDB;
+CREATE INDEX ix_rc_ruta_orden ON rutas_clientes (id_ruta, orden);
+
+CREATE TABLE movimientos_ruta (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_ruta INT NOT NULL,
+  id_cliente INT NOT NULL,
+  tipo_movimiento ENUM('cliente_agregado','visita_extra') NOT NULL,
+  escaneo_qr TINYINT(1) NOT NULL DEFAULT 0,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mr_ruta    FOREIGN KEY (id_ruta)    REFERENCES rutas_diarias(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mr_cliente FOREIGN KEY (id_cliente) REFERENCES clientes(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_mr_ruta_fecha ON movimientos_ruta (id_ruta, fecha);
+
+/* DEVOLUCIONES */
+CREATE TABLE devoluciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  id_cliente INT NULL,
+  cliente_nombre VARCHAR(120) NULL,
+  cliente_qr VARCHAR(64) NULL,
+  motivo VARCHAR(200) NOT NULL,
+  procesada TINYINT(1) NOT NULL DEFAULT 0,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_dev_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id),
+  CONSTRAINT fk_dev_cliente  FOREIGN KEY (id_cliente)  REFERENCES clientes(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_dev_vendedor_fecha ON devoluciones (id_vendedor, fecha);
+CREATE INDEX idx_dev_fecha ON devoluciones (fecha);
+CREATE INDEX idx_dev_vendedor ON devoluciones (id_vendedor);
+CREATE INDEX idx_dev_motivo ON devoluciones (motivo);
+
+CREATE TABLE devolucion_detalle (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_devolucion INT NOT NULL,
+  id_producto INT NULL,
+  nombre_producto VARCHAR(150) NOT NULL,
+  cantidad INT NOT NULL,
+  precio_unitario DECIMAL(10,2) NULL,
+  CONSTRAINT fk_devd_dev FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id) ON DELETE CASCADE,
+  CONSTRAINT fk_devd_producto FOREIGN KEY (id_producto) REFERENCES productos(id)
+) ENGINE=InnoDB;
+CREATE INDEX idx_det_devolucion ON devolucion_detalle (id_devolucion);
+CREATE INDEX idx_det_producto_nombre ON devolucion_detalle (nombre_producto);
+
+/* DESCARGAS */
+CREATE TABLE descargas (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_camioneta INT NULL,
+  id_usuario INT NULL,
+  carga_id INT NULL,
+  fecha DATETIME NOT NULL,
+  observaciones TEXT NULL,
+  procesada TINYINT(1) NOT NULL DEFAULT 0,
+  lista_para_confirmar TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  INDEX (id_camioneta),
+  INDEX (id_usuario),
+  INDEX (procesada),
+  INDEX (lista_para_confirmar),
+  INDEX (fecha),
+  INDEX (carga_id),
+  CONSTRAINT fk_descargas_carga FOREIGN KEY (carga_id) REFERENCES cargas(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE descarga_productos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_descarga INT NOT NULL,
+  id_producto INT NOT NULL,
+  cantidad INT NOT NULL DEFAULT 0,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_descarga_producto (id_descarga, id_producto),
+  INDEX (id_producto),
+  CONSTRAINT fk_dp_descarga FOREIGN KEY (id_descarga) REFERENCES descargas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE descargas_devoluciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_descarga INT NOT NULL,
+  id_devolucion INT NOT NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_descarga_devolucion (id_descarga, id_devolucion),
+  INDEX (id_devolucion),
+  CONSTRAINT fk_dd_descarga   FOREIGN KEY (id_descarga)   REFERENCES descargas(id)   ON DELETE CASCADE,
+  CONSTRAINT fk_dd_devolucion FOREIGN KEY (id_devolucion) REFERENCES devoluciones(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE descargas_snapshot (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  descarga_id INT NOT NULL,
+  snapshot_json JSON NOT NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX (descarga_id),
+  CONSTRAINT fk_descarga_snapshot FOREIGN KEY (descarga_id) REFERENCES descargas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+/* PRESTAMOS/CAJAS + SALDOS/MOVS */
+CREATE TABLE prestamos_cajas (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  carga_id INT NULL,
+  id_envase INT NOT NULL,
+  tipo ENUM('prestamo','recoleccion') NOT NULL,
+  cantidad INT NOT NULL,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  descarga_id INT NULL,
+  CONSTRAINT fk_pc_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT fk_pc_envase   FOREIGN KEY (id_envase)   REFERENCES envase(id)     ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT fk_pc_carga    FOREIGN KEY (carga_id)    REFERENCES cargas(id)     ON DELETE SET NULL,
+  CONSTRAINT fk_pc_descarga FOREIGN KEY (descarga_id) REFERENCES descargas(id)  ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE INDEX idx_pc_vend_fecha ON prestamos_cajas (id_vendedor, fecha);
+CREATE INDEX idx_pc_envase ON prestamos_cajas (id_envase);
+CREATE INDEX idx_pc_carga ON prestamos_cajas (carga_id);
+
+CREATE TABLE clientes_cajas_saldo (
+  cliente_id INT PRIMARY KEY,
+  debe_chica INT NOT NULL DEFAULT 0,
+  debe_grande INT NOT NULL DEFAULT 0,
+  debe_cubeta INT NOT NULL DEFAULT 0,
+  afavor_chica INT NOT NULL DEFAULT 0,
+  afavor_grande INT NOT NULL DEFAULT 0,
+  afavor_cubeta INT NOT NULL DEFAULT 0,
+  folio INT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ccs_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE clientes_cajas_mov (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cliente_id INT NOT NULL,
+  vendedor_id INT NULL,
+  tipo ENUM('prestamo','recoleccion') NOT NULL,
+  cant_chica_solic INT NOT NULL DEFAULT 0,
+  cant_grande_solic INT NOT NULL DEFAULT 0,
+  cant_cubeta_solic INT NOT NULL DEFAULT 0,
+  cant_chica_aplica INT NOT NULL DEFAULT 0,
+  cant_grande_aplica INT NOT NULL DEFAULT 0,
+  cant_cubeta_aplica INT NOT NULL DEFAULT 0,
+  saldo_antes_chica INT NOT NULL DEFAULT 0,
+  saldo_antes_grande INT NOT NULL DEFAULT 0,
+  saldo_antes_cubeta INT NOT NULL DEFAULT 0,
+  saldo_despues_chica INT NOT NULL DEFAULT 0,
+  saldo_despues_grande INT NOT NULL DEFAULT 0,
+  saldo_despues_cubeta INT NOT NULL DEFAULT 0,
+  afavor_generado_chica INT NOT NULL DEFAULT 0,
+  afavor_generado_grande INT NOT NULL DEFAULT 0,
+  afavor_generado_cubeta INT NOT NULL DEFAULT 0,
+  afavor_antes_chica INT NOT NULL DEFAULT 0,
+  afavor_antes_grande INT NOT NULL DEFAULT 0,
+  afavor_antes_cubeta INT NOT NULL DEFAULT 0,
+  afavor_despues_chica INT NOT NULL DEFAULT 0,
+  afavor_despues_grande INT NOT NULL DEFAULT 0,
+  afavor_despues_cubeta INT NOT NULL DEFAULT 0,
+  folio INT NOT NULL,
+  observacion VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ccm_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id),
+  CONSTRAINT fk_ccm_vendedor FOREIGN KEY (vendedor_id) REFERENCES vendedores(id) ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+CREATE INDEX ix_ccm_cli_fecha ON clientes_cajas_mov (cliente_id, created_at);
+CREATE INDEX ix_ccm_vendedor ON clientes_cajas_mov (vendedor_id);
+
+/* VENTA PÚBLICO */
+CREATE TABLE ventas_publico (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  metodo_pago ENUM('efectivo','transferencia') NOT NULL,
+  latitud DECIMAL(10,7) NULL,
+  longitud DECIMAL(10,7) NULL,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_vp_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE INDEX ix_vp_vendedor_fecha ON ventas_publico (id_vendedor, fecha);
+
+CREATE TABLE ventas_publico_detalle (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  venta_publico_id INT NOT NULL,
+  producto_id INT NOT NULL,
+  nombre_producto VARCHAR(150) NOT NULL,
+  cantidad DECIMAL(10,3) NOT NULL,
+  precio_unitario DECIMAL(10,2) NOT NULL,
+  subtotal DECIMAL(14,2) AS (cantidad * precio_unitario) STORED,
+  CONSTRAINT fk_vpd_vp   FOREIGN KEY (venta_publico_id) REFERENCES ventas_publico(id) ON DELETE CASCADE,
+  CONSTRAINT fk_vpd_prod FOREIGN KEY (producto_id)      REFERENCES productos(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE INDEX ix_vpd_vp   ON ventas_publico_detalle (venta_publico_id);
+CREATE INDEX ix_vpd_prod ON ventas_publico_detalle (producto_id);
+
+/* DISPOSITIVOS */
+CREATE TABLE dispositivo_tipos (
+  id TINYINT AUTO_INCREMENT PRIMARY KEY,
+  codigo VARCHAR(10) NOT NULL,
+  nombre VARCHAR(60) NOT NULL,
+  prefijo VARCHAR(10) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY ux_disptipos_codigo (codigo)
+) ENGINE=InnoDB;
+
+CREATE TABLE dispositivo_secuencias (
+  tipo_codigo VARCHAR(10) PRIMARY KEY,
+  siguiente INT NOT NULL DEFAULT 1,
+  CONSTRAINT fk_disposeq_tipo FOREIGN KEY (tipo_codigo) REFERENCES dispositivo_tipos(codigo)
+    ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE dispositivos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tipo_codigo VARCHAR(10) NOT NULL,
+  codigo VARCHAR(20) NOT NULL,
+  marca VARCHAR(60) NOT NULL,
+  modelo VARCHAR(80) NOT NULL,
+  numero_serie VARCHAR(80) NULL,
+  imei1 VARCHAR(20) NULL,
+  imei2 VARCHAR(20) NULL,
+  numero_linea VARCHAR(20) NULL,
+  correo_login VARCHAR(120) NULL,
+  password_login VARCHAR(255) NULL,
+  password_dispositivo VARCHAR(255) NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_dispositivos_codigo (codigo),
+  UNIQUE KEY ux_dispositivos_serie (numero_serie),
+  UNIQUE KEY ux_dispositivos_imei1 (imei1),
+  CONSTRAINT fk_dispositivo_tipo FOREIGN KEY (tipo_codigo) REFERENCES dispositivo_tipos(codigo)
+    ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+CREATE INDEX ix_disp_tipo ON dispositivos (tipo_codigo);
+
+CREATE TABLE dispositivos_asignaciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  dispositivo_id INT NOT NULL,
+  usuario_id INT NOT NULL,
+  fecha_entrega DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_devolucion DATETIME NULL,
+  estado ENUM('asignado','devuelto') NOT NULL DEFAULT 'asignado',
+  observaciones VARCHAR(255) NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_dispasg_disp FOREIGN KEY (dispositivo_id) REFERENCES dispositivos(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_dispasg_user FOREIGN KEY (usuario_id)     REFERENCES usuarios(id)     ON DELETE RESTRICT
+) ENGINE=InnoDB;
+CREATE INDEX ix_dispasg_disp_estado ON dispositivos_asignaciones (dispositivo_id, estado, fecha_entrega);
+CREATE INDEX ix_dispasg_user_estado ON dispositivos_asignaciones (usuario_id, estado, fecha_entrega);
+
+CREATE TABLE dispositivos_vinculos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  impresora_id INT NOT NULL,
+  principal_id INT NOT NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_vinculo_impresora (impresora_id),
+  CONSTRAINT fk_vinc_impresora FOREIGN KEY (impresora_id) REFERENCES dispositivos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_vinc_principal FOREIGN KEY (principal_id) REFERENCES dispositivos(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE INDEX ix_vinc_principal ON dispositivos_vinculos (principal_id);
+
+CREATE TABLE dispositivos_eventos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  dispositivo_id INT NOT NULL,
+  usuario_id INT NULL,
+  tipo_evento ENUM('asignacion','devolucion','reparacion_inicio','reparacion_fin','baja','cambio_linea','otro') NOT NULL,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  detalle VARCHAR(255) NULL,
+  CONSTRAINT fk_dispevt_disp FOREIGN KEY (dispositivo_id) REFERENCES dispositivos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_dispevt_user FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+CREATE INDEX ix_dispevt_disp_fecha ON dispositivos_eventos (dispositivo_id, fecha);
+
+/* MOTIVOS NO VENTA + VISITAS NO VENTA */
+CREATE TABLE motivos_no_venta_catalogo (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  clave VARCHAR(60) NOT NULL,
+  descripcion VARCHAR(180) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY ux_motivosnv_clave (clave)
+) ENGINE=InnoDB;
+
+CREATE TABLE visitas_no_venta (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  id_vendedor INT NOT NULL,
+  id_cliente INT NOT NULL,
+  ruta_id INT NULL,
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  latitud DECIMAL(10,7) NULL,
+  longitud DECIMAL(10,7) NULL,
+  motivos_json JSON NOT NULL,
+  observaciones TEXT NULL,
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_vnv_vendedor FOREIGN KEY (id_vendedor) REFERENCES vendedores(id),
+  CONSTRAINT fk_vnv_cliente  FOREIGN KEY (id_cliente)  REFERENCES clientes(id),
+  CONSTRAINT fk_vnv_ruta     FOREIGN KEY (ruta_id)     REFERENCES rutas_diarias(id)
+) ENGINE=InnoDB;
+CREATE INDEX ix_vnv_vendedor_fecha ON visitas_no_venta (id_vendedor, fecha);
+CREATE INDEX ix_vnv_cliente_fecha  ON visitas_no_venta (id_cliente,  fecha);
+
+/* TABLAS AUX RELACIONADAS QUE MENCIONASTE EN LISTA INICIAL (si aplica) */
+-- (No se requieren adicionales: todo lo de la lista inicial quedó cubierto)
+
+-- =========================
+-- 02) VISTAS
+-- =========================
+CREATE OR REPLACE VIEW vw_pedido_original AS
+SELECT
+  p.id               AS pedido_id,
+  p.fecha,
+  p.id_vendedor,
+  pdh.producto_id,
+  pdh.nombre_producto,
+  pdh.cantidad_solicitada,
+  pdh.precio_unitario,
+  pdh.subtotal_solicitado
+FROM pedidos p
+JOIN pedido_detalle_hist pdh ON pdh.pedido_id = p.id;
+
+CREATE OR REPLACE VIEW vw_carga_actual AS
+SELECT
+  c.id             AS carga_id,
+  c.fecha,
+  c.id_vendedor,
+  c.id_camioneta,
+  dp.producto_id,
+  dp.nombre_producto,
+  dp.cantidad_inicial   AS cantidad_cargada,
+  dp.ventas,
+  dp.devoluciones,
+  dp.restante,
+  dp.precio_unitario,
+  dp.total_inicial,
+  dp.total_vendido
+FROM cargas c
+JOIN detalle_pedido dp ON dp.carga_id = c.id;
+
+CREATE OR REPLACE VIEW vw_cargas_resumen AS
+SELECT
+  c.id                        AS carga_id,
+  c.fecha,
+  c.id_vendedor,
+  c.id_usuario                AS id_cargador,
+  c.id_camioneta,
+  c.procesada,
+  c.lista_para_confirmar,
+  c.lista_para_procesar,
+  c.pedido_id,
+  SUM(dp.cantidad_inicial)    AS piezas_iniciales,
+  SUM(dp.ventas)              AS piezas_vendidas,
+  SUM(dp.devoluciones)        AS piezas_devueltas,
+  SUM(dp.restante)            AS piezas_restantes,
+  SUM(dp.cantidad_inicial * dp.precio_unitario) AS importe_inicial,
+  SUM(dp.ventas * dp.precio_unitario)           AS importe_vendido
+FROM cargas c
+JOIN detalle_pedido dp ON dp.carga_id = c.id
+GROUP BY c.id, c.fecha, c.id_vendedor, c.id_usuario, c.id_camioneta,
+         c.procesada, c.lista_para_confirmar, c.lista_para_procesar, c.pedido_id;
+
+CREATE OR REPLACE VIEW vw_ultima_carga_por_vendedor AS
+SELECT t.id_vendedor, t.carga_id
+FROM (
+  SELECT c.id_vendedor, c.id AS carga_id,
+         ROW_NUMBER() OVER (PARTITION BY c.id_vendedor ORDER BY c.fecha DESC, c.id DESC) AS rn
+  FROM cargas c
+) t
+WHERE t.rn = 1;
+
+CREATE OR REPLACE VIEW vw_dispositivos_asignacion_actual AS
+SELECT
+  d.id,
+  d.codigo,
+  d.tipo_codigo,
+  d.marca,
+  d.modelo,
+  d.numero_serie,
+  a.usuario_id,
+  u.nombre         AS usuario_nombre,
+  a.fecha_entrega,
+  a.estado         AS estado_asignacion
+FROM dispositivos d
+LEFT JOIN dispositivos_asignaciones a
+  ON a.dispositivo_id = d.id
+ AND a.estado = 'asignado'
+ AND a.fecha_devolucion IS NULL
+LEFT JOIN usuarios u ON u.id = a.usuario_id;
+
+CREATE OR REPLACE VIEW vw_dispositivos_resumen AS
+SELECT
+  d.id,
+  d.codigo,
+  dt.nombre       AS tipo,
+  d.marca,
+  d.modelo,
+  d.numero_serie,
+  d.imei1,
+  d.numero_linea,
+  COALESCE(u.nombre,'—') AS asignado_a,
+  a.fecha_entrega
+FROM dispositivos d
+JOIN dispositivo_tipos dt ON dt.codigo = d.tipo_codigo
+LEFT JOIN dispositivos_asignaciones a
+       ON a.dispositivo_id = d.id
+      AND a.estado='asignado'
+      AND a.fecha_devolucion IS NULL
+LEFT JOIN usuarios u ON u.id = a.usuario_id;
+
+-- =========================
+-- 03) TRIGGERS
+-- =========================
+
+/* DESCUENTOS: no-traslape cliente */
+DROP TRIGGER IF EXISTS trg_dc_bi_no_overlap;
+DELIMITER //
+CREATE TRIGGER trg_dc_bi_no_overlap
+BEFORE INSERT ON descuentos_cliente
+FOR EACH ROW
+BEGIN
+  IF NEW.activo = 1 THEN
+    IF EXISTS (
+      SELECT 1
+        FROM descuentos_cliente d
+       WHERE d.cliente_id = NEW.cliente_id
+         AND d.activo = 1
+         AND NOT (NEW.fecha_fin < d.fecha_inicio OR NEW.fecha_inicio > d.fecha_fin)
+    ) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Traslape de vigencia en descuentos_cliente para este cliente (activo=1)';
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_dc_bu_no_overlap;
+DELIMITER //
+CREATE TRIGGER trg_dc_bu_no_overlap
+BEFORE UPDATE ON descuentos_cliente
+FOR EACH ROW
+BEGIN
+  IF NEW.activo = 1 THEN
+    IF EXISTS (
+      SELECT 1
+        FROM descuentos_cliente d
+       WHERE d.cliente_id = NEW.cliente_id
+         AND d.id <> OLD.id
+         AND d.activo = 1
+         AND NOT (NEW.fecha_fin < d.fecha_inicio OR NEW.fecha_inicio > d.fecha_fin)
+    ) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Traslape de vigencia en descuentos_cliente al actualizar (activo=1)';
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+/* DESCUENTOS: cliente+producto */
+DROP TRIGGER IF EXISTS trg_dcp_bi_no_overlap;
+DELIMITER //
+CREATE TRIGGER trg_dcp_bi_no_overlap
+BEFORE INSERT ON descuentos_cliente_producto
+FOR EACH ROW
+BEGIN
+  IF NEW.activo = 1 THEN
+    IF EXISTS (
+      SELECT 1
+        FROM descuentos_cliente_producto d
+       WHERE d.cliente_id  = NEW.cliente_id
+         AND d.producto_id = NEW.producto_id
+         AND d.activo = 1
+         AND NOT (NEW.fecha_fin < d.fecha_inicio OR NEW.fecha_inicio > d.fecha_fin)
+    ) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Traslape de vigencia en descuentos_cliente_producto (activo=1)';
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_dcp_bu_no_overlap;
+DELIMITER //
+CREATE TRIGGER trg_dcp_bu_no_overlap
+BEFORE UPDATE ON descuentos_cliente_producto
+FOR EACH ROW
+BEGIN
+  IF NEW.activo = 1 THEN
+    IF EXISTS (
+      SELECT 1
+        FROM descuentos_cliente_producto d
+       WHERE d.cliente_id  = NEW.cliente_id
+         AND d.producto_id = NEW.producto_id
+         AND d.id <> OLD.id
+         AND d.activo = 1
+         AND NOT (NEW.fecha_fin < d.fecha_inicio OR NEW.fecha_inicio > d.fecha_fin)
+    ) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Traslape de vigencia en descuentos_cliente_producto al actualizar (activo=1)';
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+/* PAGOS CREDITO -> recalcula saldo */
+DROP TRIGGER IF EXISTS trg_pagos_credito_ai_update_saldo;
+DELIMITER //
+CREATE TRIGGER trg_pagos_credito_ai_update_saldo
+AFTER INSERT ON pagos_credito
+FOR EACH ROW
+BEGIN
+  UPDATE creditos c
+     SET c.saldo = GREATEST(
+       COALESCE(c.total,0.00) -
+       (SELECT COALESCE(SUM(p.monto),0.00) FROM pagos_credito p WHERE p.id_credito = c.id),
+       0.00
+     )
+   WHERE c.id = NEW.id_credito;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_pagos_credito_au_update_saldo;
+DELIMITER //
+CREATE TRIGGER trg_pagos_credito_au_update_saldo
+AFTER UPDATE ON pagos_credito
+FOR EACH ROW
+BEGIN
+  IF NEW.monto <> OLD.monto OR NEW.id_credito <> OLD.id_credito THEN
+    UPDATE creditos c
+       SET c.saldo = GREATEST(
+         COALESCE(c.total,0.00) -
+         (SELECT COALESCE(SUM(p.monto),0.00) FROM pagos_credito p WHERE p.id_credito = c.id),
+         0.00
+       )
+     WHERE c.id IN (OLD.id_credito, NEW.id_credito);
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_pagos_credito_ad_update_saldo;
+DELIMITER //
+CREATE TRIGGER trg_pagos_credito_ad_update_saldo
+AFTER DELETE ON pagos_credito
+FOR EACH ROW
+BEGIN
+  UPDATE creditos c
+     SET c.saldo = GREATEST(
+       COALESCE(c.total,0.00) -
+       (SELECT COALESCE(SUM(p.monto),0.00) FROM pagos_credito p WHERE p.id_credito = c.id),
+       0.00
+     )
+   WHERE c.id = OLD.id_credito;
+END//
+DELIMITER ;
+
+/* VENTAS: set flags por cadena y crea crédito */
+DROP TRIGGER IF EXISTS trg_ventas_bi_flags_cadena;
+DELIMITER //
+CREATE TRIGGER trg_ventas_bi_flags_cadena
+BEFORE INSERT ON ventas
+FOR EACH ROW
+BEGIN
+  IF NEW.id_cliente IS NOT NULL THEN
+    SET NEW.es_cadena = (
+      SELECT (tipo_cliente IN ('cadena','C'))
+      FROM clientes WHERE id = NEW.id_cliente
+    );
+    IF NEW.es_cadena = 1 THEN
+      SET NEW.excluir_corte = 1;
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_ventas_ai_credito;
+DELIMITER //
+CREATE TRIGGER trg_ventas_ai_credito
+AFTER INSERT ON ventas
+FOR EACH ROW
+BEGIN
+  IF NEW.tipo_pago='credito' THEN
+    INSERT INTO creditos (id_venta, total, saldo, fecha_vencimiento, ocultar_vendedor)
+    SELECT
+      NEW.id,
+      NEW.total,
+      NEW.total,
+      CASE
+        WHEN NEW.id_cliente IS NOT NULL
+          THEN DATE_ADD(DATE(NEW.fecha), INTERVAL COALESCE(cli.dias_credito,0) DAY)
+        ELSE NULL
+      END,
+      CASE
+        WHEN NEW.id_cliente IS NOT NULL
+             AND (cli.tipo_cliente IN ('cadena','C')) THEN 1
+        ELSE 0
+      END
+    FROM clientes cli
+    WHERE cli.id = NEW.id_cliente;
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_creditos_bi_defaults;
+DELIMITER //
+CREATE TRIGGER trg_creditos_bi_defaults
+BEFORE INSERT ON creditos
+FOR EACH ROW
+BEGIN
+  IF NEW.total IS NULL OR NEW.total < 0 THEN SET NEW.total = 0.00; END IF;
+  IF NEW.saldo IS NULL OR NEW.saldo < 0 THEN SET NEW.saldo = NEW.total; END IF;
+END//
+DELIMITER ;
+
+/* PEDIDOS: set id_camioneta si falta a partir del vendedor */
+DROP TRIGGER IF EXISTS trg_pedidos_bi_set_camioneta;
+DELIMITER //
+CREATE TRIGGER trg_pedidos_bi_set_camioneta
+BEFORE INSERT ON pedidos
+FOR EACH ROW
+BEGIN
+  IF NEW.id_camioneta IS NULL AND NEW.id_vendedor IS NOT NULL THEN
+    SET NEW.id_camioneta = (
+      SELECT camioneta_id
+      FROM vendedores
+      WHERE id = NEW.id_vendedor
+      LIMIT 1
+    );
+  END IF;
+END//
+DELIMITER ;
+
+/* DISPOSITIVOS: nullify campos si impresora */
+DROP TRIGGER IF EXISTS trg_dispositivos_bi_nullify_for_printers;
+DELIMITER //
+CREATE TRIGGER trg_dispositivos_bi_nullify_for_printers
+BEFORE INSERT ON dispositivos
+FOR EACH ROW
+BEGIN
+  IF NEW.tipo_codigo IN ('IMP-T','IMP-C','IMP-CE') THEN
+    SET NEW.correo_login = NULL,
+        NEW.password_login = NULL,
+        NEW.password_dispositivo = NULL;
+  END IF;
+END//
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS trg_dispositivos_bu_nullify_for_printers;
+DELIMITER //
+CREATE TRIGGER trg_dispositivos_bu_nullify_for_printers
+BEFORE UPDATE ON dispositivos
+FOR EACH ROW
+BEGIN
+  IF NEW.tipo_codigo IN ('IMP-T','IMP-C','IMP-CE') THEN
+    SET NEW.correo_login = NULL,
+        NEW.password_login = NULL,
+        NEW.password_dispositivo = NULL;
+  END IF;
+END//
+DELIMITER ;
+
+/* DISPOSITIVOS: autogenera código por tipo */
+DROP TRIGGER IF EXISTS trg_dispositivos_bi_codigo;
+DELIMITER //
+CREATE TRIGGER trg_dispositivos_bi_codigo
+BEFORE INSERT ON dispositivos
+FOR EACH ROW
+BEGIN
+  DECLARE v_prefijo VARCHAR(10);
+  DECLARE v_next INT;
+
+  SELECT prefijo INTO v_prefijo
+  FROM dispositivo_tipos
+  WHERE codigo = NEW.tipo_codigo;
+
+  IF v_prefijo IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Tipo de dispositivo inválido';
+  END IF;
+
+  SELECT siguiente INTO v_next
+  FROM dispositivo_secuencias
+  WHERE tipo_codigo = NEW.tipo_codigo
+  FOR UPDATE;
+
+  UPDATE dispositivo_secuencias
+     SET siguiente = v_next + 1
+   WHERE tipo_codigo = NEW.tipo_codigo;
+
+  IF NEW.codigo IS NULL OR NEW.codigo = '' THEN
+    SET NEW.codigo = CONCAT(v_prefijo, '-', LPAD(v_next, 3, '0'));
+  END IF;
+END//
+DELIMITER ;
+
+/* ASIGNACIONES: una abierta por dispositivo */
+DROP TRIGGER IF EXISTS trg_dispasg_bi_unica_abierta;
+DELIMITER //
+CREATE TRIGGER trg_dispasg_bi_unica_abierta
+BEFORE INSERT ON dispositivos_asignaciones
+FOR EACH ROW
+BEGIN
+  IF NEW.estado = 'asignado' THEN
+    IF EXISTS (
+      SELECT 1 FROM dispositivos_asignaciones a
+       WHERE a.dispositivo_id = NEW.dispositivo_id
+         AND a.estado = 'asignado'
+         AND a.fecha_devolucion IS NULL
+    ) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT='El dispositivo ya tiene una asignación vigente';
+    END IF;
+  END IF;
+END//
+DELIMITER ;
+
+/* ASIGNACIONES: reglas de rol por tipo */
+DROP TRIGGER IF EXISTS trg_dispasg_bi_reglas_roles;
+DELIMITER //
+CREATE TRIGGER trg_dispasg_bi_reglas_roles
+BEFORE INSERT ON dispositivos_asignaciones
+FOR EACH ROW
+BEGIN
+  DECLARE v_tipo VARCHAR(10);
+  DECLARE v_rol  VARCHAR(50);
+
+  SELECT d.tipo_codigo INTO v_tipo FROM dispositivos d WHERE d.id = NEW.dispositivo_id;
+  SELECT r.nombre INTO v_rol FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = NEW.usuario_id;
+
+  IF v_tipo IS NULL OR v_rol IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Dispositivo o usuario inválido';
+  END IF;
+
+  IF v_tipo = 'CEL' AND v_rol <> 'Vendedor' THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT='Un CELULAR solo puede asignarse a usuarios con rol Vendedor';
+  END IF;
+
+  IF v_tipo = 'TAB' AND v_rol NOT IN ('Cargador','Devoluciones','Pedidos') THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT='Una TABLET solo puede asignarse a Cargador / Devoluciones / Pedidos';
+  END IF;
+END//
+DELIMITER ;
+
+/* ASIGNACIONES: único CEL/TAB por usuario */
+DROP TRIGGER IF EXISTS trg_dispasg_bi_unico_por_usuario_celtab;
+DELIMITER //
+CREATE TRIGGER trg_dispasg_bi_unico_por_usuario_celtab
+BEFORE INSERT ON dispositivos_asignaciones
+FOR EACH ROW
+BEGIN
+  DECLARE v_conflictos INT DEFAULT 0;
+  SELECT COUNT(*) INTO v_conflictos
+  FROM dispositivos_asignaciones a
+  JOIN dispositivos d ON d.id = a.dispositivo_id
+  WHERE a.usuario_id = NEW.usuario_id
+    AND a.estado='asignado'
+    AND a.fecha_devolucion IS NULL
+    AND d.tipo_codigo IN ('CEL','TAB');
+
+  IF v_conflictos > 0 THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'El usuario ya tiene un CEL/TAB asignado';
+  END IF;
+END//
+DELIMITER ;
+
+/* ASIGNACIONES: al devolver, corta vínculos impresoras */
+DROP TRIGGER IF EXISTS trg_dispasg_au_unlink_printers_on_return;
+DELIMITER //
+CREATE TRIGGER trg_dispasg_au_unlink_printers_on_return
+AFTER UPDATE ON dispositivos_asignaciones
+FOR EACH ROW
+BEGIN
+  IF OLD.estado='asignado'
+     AND (NEW.estado='devuelto' OR NEW.fecha_devolucion IS NOT NULL) THEN
+    DELETE FROM dispositivos_vinculos
+     WHERE principal_id = OLD.dispositivo_id;
+  END IF;
+END//
+DELIMITER ;
+
+/* VINCULOS: validación impresora->principal tipo */
+DROP TRIGGER IF EXISTS trg_dispvinc_bi_tipos;
+DELIMITER //
+CREATE TRIGGER trg_dispvinc_bi_tipos
+BEFORE INSERT ON dispositivos_vinculos
+FOR EACH ROW
+BEGIN
+  DECLARE v_imp_tipo VARCHAR(10);
+  DECLARE v_pri_tipo VARCHAR(10);
+
+  SELECT tipo_codigo INTO v_imp_tipo FROM dispositivos WHERE id = NEW.impresora_id;
+  SELECT tipo_codigo INTO v_pri_tipo FROM dispositivos WHERE id = NEW.principal_id;
+
+  IF v_imp_tipo IS NULL OR v_pri_tipo IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Dispositivo no encontrado';
+  END IF;
+
+  IF v_imp_tipo = 'IMP-T' AND v_pri_tipo <> 'TAB' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='IMP-T solo puede vincularse a una TABLET';
+  END IF;
+
+  IF v_imp_tipo IN ('IMP-C','IMP-CE') AND v_pri_tipo <> 'CEL' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='IMP-C / IMP-CE solo con CELULAR';
+  END IF;
+
+  IF v_imp_tipo NOT IN ('IMP-T','IMP-C','IMP-CE') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Solo impresoras pueden crearse en esta tabla';
+  END IF;
+END//
+DELIMITER ;
+
+-- =========================
+-- 04) STORED PROCEDURES
+-- =========================
+DROP PROCEDURE IF EXISTS sp_preload_rutas;
+DELIMITER //
+CREATE PROCEDURE sp_preload_rutas(IN p_fecha DATE, IN p_vendedor_id INT)
+BEGIN
+  IF p_vendedor_id IS NOT NULL THEN
+    INSERT INTO rutas_diarias (id_vendedor, fecha, estado)
+    SELECT v.id, p_fecha, 'programada'
+    FROM vendedores v
+    WHERE v.id = p_vendedor_id
+      AND v.activo=1 AND v.eliminado=0
+      AND NOT EXISTS (
+        SELECT 1 FROM rutas_diarias r
+        WHERE r.id_vendedor = v.id AND r.fecha = p_fecha
+      );
+  ELSE
+    INSERT INTO rutas_diarias (id_vendedor, fecha, estado)
+    SELECT v.id, p_fecha, 'programada'
+    FROM vendedores v
+    WHERE v.activo=1 AND v.eliminado=0
+      AND NOT EXISTS (
+        SELECT 1 FROM rutas_diarias r
+        WHERE r.id_vendedor = v.id AND r.fecha = p_fecha
+      );
+  END IF;
+END//
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS sp_iniciar_rutas_auto;
+DELIMITER //
+CREATE PROCEDURE sp_iniciar_rutas_auto(IN p_fecha DATE)
+BEGIN
+  CALL sp_preload_rutas(p_fecha, NULL);
+  UPDATE rutas_diarias
+     SET estado   = 'en_curso',
+         inicio_en = COALESCE(inicio_en, NOW())
+   WHERE fecha = p_fecha
+     AND estado = 'programada';
+END//
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS sp_finalizar_rutas_auto;
+DELIMITER //
+CREATE PROCEDURE sp_finalizar_rutas_auto(IN p_fecha DATE)
+BEGIN
+  UPDATE rutas_diarias
+     SET estado    = 'finalizada',
+         termino_en = COALESCE(termino_en, NOW())
+   WHERE fecha = p_fecha
+     AND estado IN ('programada','en_curso');
+END//
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS sp_asignar_dispositivo;
+DELIMITER //
+CREATE PROCEDURE sp_asignar_dispositivo(
+  IN p_dispositivo_id INT,
+  IN p_usuario_id     INT,
+  IN p_observaciones  VARCHAR(255)
+)
+BEGIN
+  DECLARE v_tipo VARCHAR(10);
+  DECLARE v_prev_disp INT;
+
+  SELECT tipo_codigo INTO v_tipo FROM dispositivos WHERE id = p_dispositivo_id;
+  IF v_tipo IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Dispositivo no encontrado';
+  END IF;
+
+  IF v_tipo IN ('IMP-T','IMP-C','IMP-CE') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Las impresoras no se asignan a usuarios (se vinculan)';
+  END IF;
+
+  SELECT a.dispositivo_id
+    INTO v_prev_disp
+    FROM dispositivos_asignaciones a
+    JOIN dispositivos d ON d.id = a.dispositivo_id
+   WHERE a.usuario_id = p_usuario_id
+     AND a.estado='asignado' AND a.fecha_devolucion IS NULL
+     AND d.tipo_codigo IN ('CEL','TAB')
+   LIMIT 1;
+
+  IF v_prev_disp IS NOT NULL THEN
+    UPDATE dispositivos_asignaciones
+       SET estado='devuelto', fecha_devolucion=NOW()
+     WHERE dispositivo_id = v_prev_disp
+       AND estado='asignado'
+       AND fecha_devolucion IS NULL;
+
+    DELETE FROM dispositivos_vinculos WHERE principal_id = v_prev_disp;
+  END IF;
+
+  INSERT INTO dispositivos_asignaciones (dispositivo_id, usuario_id, observaciones)
+  VALUES (p_dispositivo_id, p_usuario_id, p_observaciones);
+END//
+DELIMITER ;
+
+USE padihersystem_lab;
+START TRANSACTION;
+
+-- ============================================
+-- categorias_productos
+-- ============================================
+INSERT INTO categorias_productos (id, nombre, slug, activo, creado_en, actualizado_en) VALUES
+(1,'Fresco','fresco',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(2,'Asadero Económico','asadero-economico',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(3,'Asadero Padiher','asadero-padiher',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(4,'Asadero Padilla','asadero-padilla',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(5,'Pizzero','pizzero',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(6,'Mozzarella','mozzarella',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(7,'Crema','crema',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(8,'Cajeta','cajeta',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(9,'Panelas','panelas',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(10,'Yogurth','yogurth',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(11,'Manchego','manchego',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(12,'Requesón','requeson',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(13,'Jocoque','jocoque',1,'2025-10-08 15:04:07','2025-10-08 15:04:07'),
+(14,'Otros','otros',1,'2025-10-08 15:04:07','2025-10-08 15:04:07')
+ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), slug=VALUES(slug), activo=VALUES(activo), actualizado_en=VALUES(actualizado_en);
+
+-- ============================================
+-- dispositivo_secuencias
+-- ============================================
+INSERT INTO dispositivo_secuencias (tipo_codigo, siguiente) VALUES
+('CEL',5),
+('IMP-C',2),
+('IMP-CE',3),
+('IMP-T',2),
+('TAB',2)
+ON DUPLICATE KEY UPDATE siguiente=VALUES(siguiente);
+
+-- ============================================
+-- dispositivo_tipos
+-- ============================================
+INSERT INTO dispositivo_tipos (id, codigo, nombre, prefijo, activo) VALUES
+(1,'TAB','Tablet','TAB',1),
+(2,'CEL','Celular','CEL',1),
+(3,'IMP-T','Impresora para Tablet (tickets)','IMP-T',1),
+(4,'IMP-C','Impresora para Celular (tickets)','IMP-C',1),
+(5,'IMP-CE','Impresora para Celular (etiquetas)','IMP-CE',1)
+ON DUPLICATE KEY UPDATE codigo=VALUES(codigo), nombre=VALUES(nombre), prefijo=VALUES(prefijo), activo=VALUES(activo);
+
+-- ============================================
+-- envase
+-- ============================================
+INSERT INTO envase (id, nombre, descripcion) VALUES
+(1,'Caja chica','Envase chico'),
+(2,'Caja grande','Envase grande'),
+(3,'Cubeta','Cubeta')
+ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), descripcion=VALUES(descripcion);
+
+-- ============================================
+-- motivos_no_venta_catalogo
+-- ============================================
+INSERT INTO motivos_no_venta_catalogo (id, clave, descripcion, activo) VALUES
+(1,'cliente_no_interesado','Cliente no interesado',1),
+(2,'precio_muy_alto','Precio muy alto',1),
+(3,'producto_agotado','Producto agotado',1),
+(4,'sin_espacio_almacen','No hay espacio para almacenar productos',1),
+(5,'no_disponible_momento','Producto no disponible en el momento',1),
+(6,'problemas_pago','Problemas con el pago',1),
+(7,'no_contacto_cliente','No se llegó a contactar al cliente',1),
+(8,'no_autorizo_compra','Cliente no autorizó la compra',1),
+(9,'condiciones_entrega_no_aceptadas','Condiciones de entrega no aceptadas',1),
+(10,'competencia_mejor_oferta','Competencia ofreció mejor oferta',1),
+(11,'razon_personal','Razón personal del cliente',1)
+ON DUPLICATE KEY UPDATE clave=VALUES(clave), descripcion=VALUES(descripcion), activo=VALUES(activo);
+
+-- ============================================
+-- estados (32 Estados de México)
+-- ============================================
+INSERT INTO estados (id, nombre, activo) VALUES
+(1,'Aguascalientes',1),
+(2,'Baja California',1),
+(3,'Baja California Sur',1),
+(4,'Campeche',1),
+(5,'Coahuila de Zaragoza',1),
+(6,'Colima',1),
+(7,'Chiapas',1),
+(8,'Chihuahua',1),
+(9,'Ciudad de México',1),
+(10,'Durango',1),
+(11,'Guanajuato',1),
+(12,'Guerrero',1),
+(13,'Hidalgo',1),
+(14,'Jalisco',1),
+(15,'México',1),
+(16,'Michoacán de Ocampo',1),
+(17,'Morelos',1),
+(18,'Nayarit',1),
+(19,'Nuevo León',1),
+(20,'Oaxaca',1),
+(21,'Puebla',1),
+(22,'Querétaro',1),
+(23,'Quintana Roo',1),
+(24,'San Luis Potosí',1),
+(25,'Sinaloa',1),
+(26,'Sonora',1),
+(27,'Tabasco',1),
+(28,'Tamaulipas',1),
+(29,'Tlaxcala',1),
+(30,'Veracruz de Ignacio de la Llave',1),
+(31,'Yucatán',1),
+(32,'Zacatecas',1)
+ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), activo=VALUES(activo);
+
+-- ============================================
+-- roles
+-- ============================================
+INSERT INTO roles (id, nombre) VALUES
+(1,'Administrador'),
+(2,'Cargador'),
+(3,'Vendedor'),
+(4,'SuperAdministrador'),
+(5,'Devoluciones'),
+(6,'Pedidos')
+ON DUPLICATE KEY UPDATE nombre=VALUES(nombre);
+
+-- ============================================
+-- productos (70 filas)
+-- ============================================
+INSERT INTO productos
+(id,nombre,categoria_id,precio,precio_mayoreo,cantidad,unidad_medida,color,tipo_venta,peso_gramos,codigo,activo,eliminado,fecha_registro,fecha_actualizacion)
+VALUES
+(1,'Chico',1,21.00,18.00,NULL,NULL,'blanco','pieza',NULL,'FChB01',1,0,'2025-10-08 15:04:42','2025-10-30 10:54:36'),
+(2,'Bola 200g',3,28.00,23.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-08 15:46:04','2025-10-28 14:20:43'),
+(3,'Tortugo',1,39.00,34.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-13 13:17:28','2025-10-13 13:17:28'),
+(4,'Chico',1,21.00,18.00,NULL,NULL,'amarillo','pieza',NULL,'FChA01',1,0,'2025-10-13 13:17:58','2025-10-30 10:53:56'),
+(5,'Tortugo',1,39.00,34.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-13 13:18:40','2025-10-13 13:18:40'),
+(6,'Adobera 250g',1,33.00,29.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-13 13:19:06','2025-10-13 13:19:06'),
+(7,'Adobera 250g',1,33.00,29.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-13 13:19:22','2025-10-13 13:19:22'),
+(8,'Adobera 420g',1,54.00,48.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-13 13:19:42','2025-10-13 13:19:42'),
+(9,'Adobera 420g',1,54.00,48.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-13 13:19:49','2025-10-13 13:19:49'),
+(10,'Adobera 620g',1,78.00,70.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-13 13:20:05','2025-10-13 13:20:05'),
+(11,'Adobera 800g',1,100.00,90.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-13 13:20:28','2025-10-13 13:20:28'),
+(12,'Adobera 800g',1,100.00,90.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-13 13:20:32','2025-10-13 13:20:32'),
+(13,'Adobera 620g',1,78.00,70.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-13 13:21:01','2025-10-13 13:21:17'),
+(14,'Bola Kilo',2,76.00,71.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:21:49','2025-10-13 13:21:49'),
+(15,'Bola 5 Kilos',2,380.00,355.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:22:10','2025-10-28 14:21:17'),
+(16,'Barra Kilo',2,76.00,71.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:22:36','2025-10-13 13:23:11'),
+(17,'Rallado Kilo',2,76.00,71.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:22:51','2025-10-13 13:23:03'),
+(18,'Rallado 5 Kilos',2,380.00,355.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:24:15','2025-10-13 13:24:15'),
+(19,'Bola 200g',3,26.00,24.00,NULL,NULL,NULL,'pieza',NULL,NULL,0,1,'2025-10-13 13:25:19','2025-10-30 10:56:08'),
+(20,'Bola 500g',3,56.00,51.50,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:25:39','2025-10-13 13:25:39'),
+(21,'Bola Kilo',3,112.00,103.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:25:58','2025-10-13 13:25:58'),
+(22,'Barra Kilo',3,112.00,103.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:26:10','2025-10-13 13:26:10'),
+(23,'Rallado Kilo',3,112.00,103.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:26:30','2025-10-13 13:26:30'),
+(24,'Bola 5 Kilos',3,560.00,515.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:27:22','2025-10-13 13:27:22'),
+(25,'Deshebrado 5 Kilos',3,560.00,515.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:27:44','2025-10-13 13:27:44'),
+(26,'Deshebrado 3 Kilos',3,336.00,309.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:27:59','2025-10-13 13:27:59'),
+(27,'Rallado 5 Kilos',3,560.00,515.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:28:25','2025-10-13 13:28:25'),
+(28,'Bola 250g',4,25.50,24.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:28:57','2025-10-13 13:28:57'),
+(29,'Bola 500g',4,51.00,48.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:30:03','2025-10-13 13:30:03'),
+(30,'Bola Kilo',4,102.00,96.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:30:30','2025-10-13 13:30:30'),
+(31,'Deshebrado Kilo',4,102.00,96.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:30:57','2025-10-13 13:30:57'),
+(32,'Barra Kilo',4,102.00,96.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:31:25','2025-10-13 13:31:25'),
+(33,'Barra 500g',4,51.00,48.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:31:53','2025-10-13 13:31:53'),
+(34,'Bola 5 Kilos',4,505.00,480.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:32:18','2025-10-13 13:32:18'),
+(35,'Deshebrado 5 Kilos',4,505.00,480.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:35:15','2025-10-13 13:35:15'),
+(36,'Bolsa 500g',5,51.00,48.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:37:50','2025-10-13 13:37:50'),
+(37,'Bolsa Kilo',5,102.00,96.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:38:08','2025-10-13 13:38:08'),
+(38,'Bolsa 5 Kilos',5,510.00,480.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:38:29','2025-10-13 13:38:29'),
+(39,'Bolsa Kilo',6,91.00,84.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:39:03','2025-10-13 13:39:03'),
+(40,'Bolsa 5 Kilos',6,455.00,420.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:39:28','2025-10-13 13:39:28'),
+(41,'Barra Kilo',6,91.00,84.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:39:48','2025-10-13 13:39:48'),
+(42,'Bolsa 500g',6,45.50,42.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:40:22','2025-10-13 13:40:22'),
+(43,'Crema Kilo',7,53.00,45.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:41:15','2025-10-13 13:41:15'),
+(44,'Crema 450',7,30.00,28.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:42:57','2025-10-13 13:42:57'),
+(45,'Crema 220',7,16.00,15.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:43:12','2025-10-13 13:43:12'),
+(46,'Cubeta 17 Kilos',7,884.00,765.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:43:30','2025-10-13 13:43:30'),
+(47,'Cajeta Kilo',8,60.00,55.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:46:11','2025-10-13 13:46:11'),
+(48,'Cajeta 500g',8,35.00,32.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:46:28','2025-10-13 13:46:28'),
+(49,'Cajeta 300g',8,23.00,21.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:46:47','2025-10-13 13:46:47'),
+(50,'Panela Kilo',9,118.00,111.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:47:22','2025-10-13 13:47:22'),
+(51,'Panela 500g',9,61.00,57.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:47:36','2025-10-13 13:47:36'),
+(52,'Panela 250g',9,32.00,30.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:47:57','2025-10-13 13:47:57'),
+(53,'Nuez',10,35.00,31.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:48:24','2025-10-13 13:48:24'),
+(54,'Piña/Coco',10,35.00,31.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:48:43','2025-10-13 13:48:43'),
+(55,'Fresa',10,35.00,31.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:48:56','2025-10-13 13:48:56'),
+(56,'Durazno',10,35.00,31.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:49:03','2025-10-13 13:49:03'),
+(57,'Natural',10,35.00,31.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:49:10','2025-10-13 13:49:10'),
+(58,'Manchego Kilo',11,164.00,152.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:49:40','2025-10-13 13:49:40'),
+(59,'Manchego 500g',11,90.00,80.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:49:56','2025-10-13 13:49:56'),
+(60,'Requesón 250g',12,29.00,26.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:50:33','2025-10-13 13:50:33'),
+(61,'Requesón Bolsa 5 Kilos',12,325.00,260.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:51:01','2025-10-13 13:51:01'),
+(62,'Jocoque Litro',13,29.00,26.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:51:26','2025-10-13 13:51:26'),
+(63,'Jocoque Medio Litro',13,26.00,23.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:51:41','2025-10-13 13:51:41'),
+(64,'Queso Amarillo',14,81.00,74.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:52:07','2025-10-13 13:52:07'),
+(65,'Rallado Para Fruta',14,33.00,28.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:52:23','2025-10-13 13:52:23'),
+(66,'Crema Natural',14,70.00,70.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-13 13:52:37','2025-10-13 13:52:37'),
+(67,'Redondo Grande',1,89.00,80.00,NULL,NULL,'blanco','pieza',NULL,NULL,1,0,'2025-10-20 12:26:04','2025-10-20 12:28:19'),
+(68,'Redondo Grande',1,89.00,80.00,NULL,NULL,'amarillo','pieza',NULL,NULL,1,0,'2025-10-20 12:26:12','2025-10-20 12:28:07'),
+(69,'QUESO CHIHUAHUA',14,124.96,115.00,NULL,NULL,NULL,'pieza',NULL,NULL,0,1,'2025-10-28 10:35:32','2025-10-28 10:36:44'),
+(70,'Cubeta 17 Kilos',8,1020.00,1020.00,NULL,NULL,NULL,'pieza',NULL,NULL,1,0,'2025-10-30 10:59:41','2025-10-30 10:59:41')
+ON DUPLICATE KEY UPDATE
+  nombre=VALUES(nombre),
+  categoria_id=VALUES(categoria_id),
+  precio=VALUES(precio),
+  precio_mayoreo=VALUES(precio_mayoreo),
+  cantidad=VALUES(cantidad),
+  unidad_medida=VALUES(unidad_medida),
+  color=VALUES(color),
+  tipo_venta=VALUES(tipo_venta),
+  peso_gramos=VALUES(peso_gramos),
+  codigo=VALUES(codigo),
+  activo=VALUES(activo),
+  eliminado=VALUES(eliminado),
+  fecha_actualizacion=VALUES(fecha_actualizacion);
+
+-- ============================================
+-- usuarios (1 fila)
+-- ============================================
+INSERT INTO usuarios
+(id, nombre, usuario, correo, telefono, contrasena, rol_id, activo, eliminado, creado_en, actualizado_en, ultimo_login, creado_por)
+VALUES
+(1,'Jose de Jesus Padilla Hermosillo','superadmin','superadmin@local','5550000000','$2b$10$dJi3NWLASpsDOuTkEnvwKuyxUsep46hHYLYg10tQhO7smdCb1JR.C',4,1,0,'2025-10-08 14:37:14','2025-10-08 14:37:14',NULL,NULL)
+ON DUPLICATE KEY UPDATE
+  nombre=VALUES(nombre),
+  usuario=VALUES(usuario),
+  correo=VALUES(correo),
+  telefono=VALUES(telefono),
+  contrasena=VALUES(contrasena),
+  rol_id=VALUES(rol_id),
+  activo=VALUES(activo),
+  eliminado=VALUES(eliminado),
+  actualizado_en=VALUES(actualizado_en);
+
+-- =========================================================
+-- INSERT DE MUNICIPIOS (PARTE 1) — ESTADOS 1..5
+-- Requiere: tabla `estados` poblada con IDs 1..32
+-- Tablas destino:
+--   municipios(id INT AI PK, nombre VARCHAR(100), estado_id INT FK, activo TINYINT(1))
+-- Codificación recomendada: utf8mb4
+-- =========================================================
+
+-- ==========
+-- 1) AGUASCALIENTES (estado_id = 1) — 11 municipios
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Aguascalientes', 1, 1),
+('Asientos', 1, 1),
+('Calvillo', 1, 1),
+('Cosío', 1, 1),
+('El Llano', 1, 1),
+('Jesús María', 1, 1),
+('Pabellón de Arteaga', 1, 1),
+('Rincón de Romos', 1, 1),
+('San Francisco de los Romo', 1, 1),
+('San José de Gracia', 1, 1),
+('Tepezalá', 1, 1);
+
+-- ==========
+-- 2) BAJA CALIFORNIA (estado_id = 2) — 7 municipios
+-- (incluye San Quintín [2020] y San Felipe [2022])
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Mexicali', 2, 1),
+('Tijuana', 2, 1),
+('Ensenada', 2, 1),
+('Tecate', 2, 1),
+('Playas de Rosarito', 2, 1),
+('San Quintín', 2, 1),
+('San Felipe', 2, 1);
+
+-- ==========
+-- 3) BAJA CALIFORNIA SUR (estado_id = 3) — 5 municipios
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Comondú', 3, 1),
+('Mulegé', 3, 1),
+('La Paz', 3, 1),
+('Los Cabos', 3, 1),
+('Loreto', 3, 1);
+
+-- ==========
+-- 4) CAMPECHE (estado_id = 4) — 13 municipios
+-- (incluye Seybaplaya [2019] y Dzitbalché [2021])
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Calkiní', 4, 1),
+('Campeche', 4, 1),
+('Carmen', 4, 1),
+('Champotón', 4, 1),
+('Hecelchakán', 4, 1),
+('Hopelchén', 4, 1),
+('Palizada', 4, 1),
+('Tenabo', 4, 1),
+('Escárcega', 4, 1),
+('Candelaria', 4, 1),
+('Calakmul', 4, 1),
+('Seybaplaya', 4, 1),
+('Dzitbalché', 4, 1);
+
+-- ==========
+-- 5) COAHUILA DE ZARAGOZA (estado_id = 5) — 38 municipios
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Abasolo', 5, 1),
+('Acuña', 5, 1),
+('Allende', 5, 1),
+('Arteaga', 5, 1),
+('Candela', 5, 1),
+('Castaños', 5, 1),
+('Cuatro Ciénegas', 5, 1),
+('Escobedo', 5, 1),
+('Francisco I. Madero', 5, 1),
+('Frontera', 5, 1),
+('General Cepeda', 5, 1),
+('Guerrero', 5, 1),
+('Hidalgo', 5, 1),
+('Jiménez', 5, 1),
+('Juárez', 5, 1),
+('Lamadrid', 5, 1),
+('Matamoros', 5, 1),
+('Monclova', 5, 1),
+('Morelos', 5, 1),
+('Múzquiz', 5, 1),
+('Nadadores', 5, 1),
+('Nava', 5, 1),
+('Ocampo', 5, 1),
+('Parras', 5, 1),
+('Piedras Negras', 5, 1),
+('Progreso', 5, 1),
+('Ramos Arizpe', 5, 1),
+('Sabinas', 5, 1),
+('Sacramento', 5, 1),
+('Saltillo', 5, 1),
+('San Buenaventura', 5, 1),
+('San Juan de Sabinas', 5, 1),
+('San Pedro', 5, 1),
+('Sierra Mojada', 5, 1),
+('Torreón', 5, 1),
+('Viesca', 5, 1),
+('Villa Unión', 5, 1),
+('Zaragoza', 5, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Armería', 6, 1),
+('Colima', 6, 1),
+('Comala', 6, 1),
+('Coquimatlán', 6, 1),
+('Cuauhtémoc', 6, 1),
+('Ixtlahuacán', 6, 1),
+('Manzanillo', 6, 1),
+('Minatitlán', 6, 1),
+('Tecomán', 6, 1),
+('Villa de Álvarez', 6, 1);
+
+-- ==========
+-- 8) CHIHUAHUA (estado_id = 8) — 67 municipios
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Ahumada', 8, 1),
+('Aldama', 8, 1),
+('Allende', 8, 1),
+('Aquiles Serdán', 8, 1),
+('Ascensión', 8, 1),
+('Bachíniva', 8, 1),
+('Balleza', 8, 1),
+('Batopilas', 8, 1),
+('Bocoyna', 8, 1),
+('Buenaventura', 8, 1),
+('Camargo', 8, 1),
+('Carichí', 8, 1),
+('Casas Grandes', 8, 1),
+('Coronado', 8, 1),
+('Coyame del Sotol', 8, 1),
+('La Cruz', 8, 1),
+('Cuauhtémoc', 8, 1),
+('Cusihuiriachi', 8, 1),
+('Chihuahua', 8, 1),
+('Chínipas', 8, 1),
+('Delicias', 8, 1),
+('Dr. Belisario Domínguez', 8, 1),
+('Galeana', 8, 1),
+('Gómez Farías', 8, 1),
+('Gran Morelos', 8, 1),
+('Guachochi', 8, 1),
+('Guadalupe', 8, 1),
+('Guadalupe y Calvo', 8, 1),
+('Guazapares', 8, 1),
+('Guerrero', 8, 1),
+('Hidalgo del Parral', 8, 1),
+('Huejotitán', 8, 1),
+('Ignacio Zaragoza', 8, 1),
+('Janos', 8, 1),
+('Jiménez', 8, 1),
+('Juárez', 8, 1),
+('Julimes', 8, 1),
+('López', 8, 1),
+('Madera', 8, 1),
+('Maguarichi', 8, 1),
+('Manuel Benavides', 8, 1),
+('Matachí', 8, 1),
+('Matamoros', 8, 1),
+('Meoqui', 8, 1),
+('Morelos', 8, 1),
+('Moris', 8, 1),
+('Namiquipa', 8, 1),
+('Nonoava', 8, 1),
+('Nuevo Casas Grandes', 8, 1),
+('Ocampo', 8, 1),
+('Ojinaga', 8, 1),
+('Práxedis G. Guerrero', 8, 1),
+('Riva Palacio', 8, 1),
+('Rosales', 8, 1),
+('Rosario', 8, 1),
+('San Francisco de Borja', 8, 1),
+('San Francisco de Conchos', 8, 1),
+('San Francisco del Oro', 8, 1),
+('Santa Bárbara', 8, 1),
+('Santa Isabel', 8, 1),
+('Satevó', 8, 1),
+('Saucillo', 8, 1),
+('Temósachic', 8, 1),
+('El Tule', 8, 1),
+('Urique', 8, 1),
+('Uruachi', 8, 1),
+('Valle de Zaragoza', 8, 1);
+
+-- ==========
+-- 9) CIUDAD DE MÉXICO (estado_id = 9) — 16 alcaldías
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Álvaro Obregón', 9, 1),
+('Azcapotzalco', 9, 1),
+('Benito Juárez', 9, 1),
+('Coyoacán', 9, 1),
+('Cuajimalpa de Morelos', 9, 1),
+('Cuauhtémoc', 9, 1),
+('Gustavo A. Madero', 9, 1),
+('Iztacalco', 9, 1),
+('Iztapalapa', 9, 1),
+('La Magdalena Contreras', 9, 1),
+('Miguel Hidalgo', 9, 1),
+('Milpa Alta', 9, 1),
+('Tláhuac', 9, 1),
+('Tlalpan', 9, 1),
+('Venustiano Carranza', 9, 1),
+('Xochimilco', 9, 1);
+
+-- ==========
+-- 10) DURANGO (estado_id = 10) — 39 municipios
+-- ==========
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Canatlán', 10, 1),
+('Canelas', 10, 1),
+('Coneto de Comonfort', 10, 1),
+('Cuencamé', 10, 1),
+('Durango', 10, 1),
+('General Simón Bolívar', 10, 1),
+('Gómez Palacio', 10, 1),
+('Guadalupe Victoria', 10, 1),
+('Guanaceví', 10, 1),
+('Hidalgo', 10, 1),
+('Indé', 10, 1),
+('Lerdo', 10, 1),
+('Mapimí', 10, 1),
+('Mezquital', 10, 1),
+('Nazas', 10, 1),
+('Nombre de Dios', 10, 1),
+('Ocampo', 10, 1),
+('El Oro', 10, 1),
+('Otáez', 10, 1),
+('Pánuco de Coronado', 10, 1),
+('Peñón Blanco', 10, 1),
+('Poanas', 10, 1),
+('Pueblo Nuevo', 10, 1),
+('Rodeo', 10, 1),
+('San Bernardo', 10, 1),
+('San Dimas', 10, 1),
+('San Juan de Guadalupe', 10, 1),
+('San Juan del Río', 10, 1),
+('San Luis del Cordero', 10, 1),
+('San Pedro del Gallo', 10, 1),
+('Santa Clara', 10, 1),
+('Santiago Papasquiaro', 10, 1),
+('Súchil', 10, 1),
+('Tamazula', 10, 1),
+('Tepehuanes', 10, 1),
+('Tlahualilo', 10, 1),
+('Topia', 10, 1),
+('Vicente Guerrero', 10, 1),
+('Nuevo Ideal', 10, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Abasolo', 11, 1),
+('Acámbaro', 11, 1),
+('San Miguel de Allende', 11, 1),
+('Apaseo el Alto', 11, 1),
+('Apaseo el Grande', 11, 1),
+('Atarjea', 11, 1),
+('Celaya', 11, 1),
+('Comonfort', 11, 1),
+('Coroneo', 11, 1),
+('Cortazar', 11, 1),
+('Cuerámaro', 11, 1),
+('Doctor Mora', 11, 1),
+('Dolores Hidalgo Cuna de la Independencia Nacional', 11, 1),
+('Guanajuato', 11, 1),
+('Huanímaro', 11, 1),
+('Irapuato', 11, 1),
+('Jaral del Progreso', 11, 1),
+('Jerécuaro', 11, 1),
+('León', 11, 1),
+('Manuel Doblado', 11, 1),
+('Moroleón', 11, 1),
+('Ocampo', 11, 1),
+('Pénjamo', 11, 1),
+('Pueblo Nuevo', 11, 1),
+('Purísima del Rincón', 11, 1),
+('Romita', 11, 1),
+('Salamanca', 11, 1),
+('Salvatierra', 11, 1),
+('San Diego de la Unión', 11, 1),
+('San Felipe', 11, 1),
+('San Francisco del Rincón', 11, 1),
+('San José Iturbide', 11, 1),
+('San Luis de la Paz', 11, 1),
+('Santa Catarina', 11, 1),
+('Santa Cruz de Juventino Rosas', 11, 1),
+('Santiago Maravatío', 11, 1),
+('Silao de la Victoria', 11, 1),
+('Tarandacuao', 11, 1),
+('Tarimoro', 11, 1),
+('Tierra Blanca', 11, 1),
+('Uriangato', 11, 1),
+('Valle de Santiago', 11, 1),
+('Victoria', 11, 1),
+('Villagrán', 11, 1),
+('Xichú', 11, 1),
+('Yuriria', 11, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acapulco de Juárez', 12, 1),
+('Ahuacuotzingo', 12, 1),
+('Ajuchitlán del Progreso', 12, 1),
+('Alcozauca de Guerrero', 12, 1),
+('Alpoyeca', 12, 1),
+('Apaxtla', 12, 1),
+('Arcelia', 12, 1),
+('Atenango del Río', 12, 1),
+('Atlamajalcingo del Monte', 12, 1),
+('Atlixtac', 12, 1),
+('Atoyac de Álvarez', 12, 1),
+('Ayutla de los Libres', 12, 1),
+('Azoyú', 12, 1),
+('Benito Juárez', 12, 1),
+('Buenavista de Cuéllar', 12, 1),
+('Chilapa de Álvarez', 12, 1),
+('Chilpancingo de los Bravo', 12, 1),
+('Coahuayutla de José María Izazaga', 12, 1),
+('Cochoapa el Grande', 12, 1),
+('Cocula', 12, 1),
+('Copala', 12, 1),
+('Copalillo', 12, 1),
+('Copanatoyac', 12, 1),
+('Coyuca de Benítez', 12, 1),
+('Coyuca de Catalán', 12, 1),
+('Cuajinicuilapa', 12, 1),
+('Cualác', 12, 1),
+('Cuautepec', 12, 1),
+('Cuetzala del Progreso', 12, 1),
+('Cutzamala de Pinzón', 12, 1),
+('Eduardo Neri', 12, 1),
+('Florencio Villarreal', 12, 1),
+('General Canuto A. Neri', 12, 1),
+('General Heliodoro Castillo', 12, 1),
+('Huamuxtitlán', 12, 1),
+('Huitzuco de los Figueroa', 12, 1),
+('Iguala de la Independencia', 12, 1),
+('Iliatenco', 12, 1),
+('Ixcateopan de Cuauhtémoc', 12, 1),
+('José Joaquín de Herrera', 12, 1),
+('Juan R. Escudero', 12, 1),
+('Juchitán', 12, 1),
+('La Unión de Isidoro Montes de Oca', 12, 1),
+('Leonardo Bravo', 12, 1),
+('Malinaltepec', 12, 1),
+('Mártir de Cuilapan', 12, 1),
+('Metlatónoc', 12, 1),
+('Mochitlán', 12, 1),
+('Olinalá', 12, 1),
+('Ometepec', 12, 1),
+('Pedro Ascencio Alquisiras', 12, 1),
+('Petatlán', 12, 1),
+('Pilcaya', 12, 1),
+('Pungarabato', 12, 1),
+('Quechultenango', 12, 1),
+('San Luis Acatlán', 12, 1),
+('San Marcos', 12, 1),
+('San Miguel Totolapan', 12, 1),
+('Taxco de Alarcón', 12, 1),
+('Tecoanapa', 12, 1),
+('Tecpan de Galeana', 12, 1),
+('Teloloapan', 12, 1),
+('Tepecoacuilco de Trujano', 12, 1),
+('Tetipac', 12, 1),
+('Tixtla de Guerrero', 12, 1),
+('Tlacoachistlahuaca', 12, 1),
+('Tlacoapa', 12, 1),
+('Tlalchapa', 12, 1),
+('Tlalixtaquilla de Maldonado', 12, 1),
+('Tlapa de Comonfort', 12, 1),
+('Tlapehuala', 12, 1),
+('Xalpatláhuac', 12, 1),
+('Xochihuehuetlán', 12, 1),
+('Xochistlahuaca', 12, 1),
+('Zapotitlán Tablas', 12, 1),
+('Zirándaro', 12, 1),
+('Zihuatanejo de Azueta', 12, 1),
+('Zitlala', 12, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acatlán', 13, 1),
+('Acaxochitlán', 13, 1),
+('Actopan', 13, 1),
+('Agua Blanca de Iturbide', 13, 1),
+('Ajacuba', 13, 1),
+('Alfajayucan', 13, 1),
+('Almoloya', 13, 1),
+('Apan', 13, 1),
+('Atitalaquia', 13, 1),
+('Atlapexco', 13, 1),
+('Atotonilco de Tula', 13, 1),
+('Atotonilco el Grande', 13, 1),
+('Calnali', 13, 1),
+('Cardonal', 13, 1),
+('Cuautepec de Hinojosa', 13, 1),
+('Chapantongo', 13, 1),
+('Chapulhuacán', 13, 1),
+('Chilcuautla', 13, 1),
+('Eloxochitlán', 13, 1),
+('Emiliano Zapata', 13, 1),
+('Epazoyucan', 13, 1),
+('Francisco I. Madero', 13, 1),
+('Huasca de Ocampo', 13, 1),
+('Huautla', 13, 1),
+('Huazalingo', 13, 1),
+('Huehuetla', 13, 1),
+('Huejutla de Reyes', 13, 1),
+('Huichapan', 13, 1),
+('Ixmiquilpan', 13, 1),
+('Jacala de Ledezma', 13, 1),
+('Jaltocán', 13, 1),
+('Juárez Hidalgo', 13, 1),
+('Lolotla', 13, 1),
+('Metepec', 13, 1),
+('Metztitlán', 13, 1),
+('Mineral del Chico', 13, 1),
+('Mineral del Monte', 13, 1),
+('La Misión', 13, 1),
+('Mixquiahuala de Juárez', 13, 1),
+('Molango de Escamilla', 13, 1),
+('Nicolás Flores', 13, 1),
+('Nopala de Villagrán', 13, 1),
+('Omitlán de Juárez', 13, 1),
+('Pachuca de Soto', 13, 1),
+('Pacula', 13, 1),
+('Pisaflores', 13, 1),
+('Progreso de Obregón', 13, 1),
+('Mineral de la Reforma', 13, 1),
+('San Agustín Tlaxiaca', 13, 1),
+('San Felipe Orizatlán', 13, 1),
+('San Salvador', 13, 1),
+('Santiago de Anaya', 13, 1),
+('Santiago Tulantepec de Lugo Guerrero', 13, 1),
+('Singuilucan', 13, 1),
+('Tasquillo', 13, 1),
+('Tecozautla', 13, 1),
+('Tenango de Doria', 13, 1),
+('Tepeapulco', 13, 1),
+('Tepehuacán de Guerrero', 13, 1),
+('Tepeji del Río de Ocampo', 13, 1),
+('Tepetitlán', 13, 1),
+('Tetepango', 13, 1),
+('Tezontepec de Aldama', 13, 1),
+('Tianguistengo', 13, 1),
+('Tizayuca', 13, 1),
+('Tlahuelilpan', 13, 1),
+('Tlahuiltepa', 13, 1),
+('Tlanalapa', 13, 1),
+('Tlanchinol', 13, 1),
+('Tlaxcoapan', 13, 1),
+('Tolcayuca', 13, 1),
+('Tula de Allende', 13, 1),
+('Tulancingo de Bravo', 13, 1),
+('Xochiatipan', 13, 1),
+('Xochicoatlán', 13, 1),
+('Yahualica', 13, 1),
+('Zacualtipán de Ángeles', 13, 1),
+('Zapotlán de Juárez', 13, 1),
+('Zempoala', 13, 1),
+('Zimapán', 13, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acatic', 14, 1),
+('Acatlán de Juárez', 14, 1),
+('Ahualulco de Mercado', 14, 1),
+('Amacueca', 14, 1),
+('Amatitán', 14, 1),
+('Ameca', 14, 1),
+('San Juanito de Escobedo', 14, 1),
+('Arandas', 14, 1),
+('Atemajac de Brizuela', 14, 1),
+('Atengo', 14, 1),
+('Atenguillo', 14, 1),
+('Atotonilco el Alto', 14, 1),
+('Atoyac', 14, 1),
+('Autlán de Navarro', 14, 1),
+('Ayotlán', 14, 1),
+('Ayutla', 14, 1),
+('La Barca', 14, 1),
+('Bolaños', 14, 1),
+('Cabo Corrientes', 14, 1),
+('Casimiro Castillo', 14, 1),
+('Cihuatlán', 14, 1),
+('Zapotlán el Grande', 14, 1),
+('Cocula', 14, 1),
+('Colotlán', 14, 1),
+('Concepción de Buenos Aires', 14, 1),
+('Cuautitlán de García Barragán', 14, 1),
+('Cuautla', 14, 1),
+('Cuquío', 14, 1),
+('Chapala', 14, 1),
+('Chimaltitán', 14, 1),
+('Degollado', 14, 1),
+('Ejutla', 14, 1),
+('Encarnación de Díaz', 14, 1),
+('Etzatlán', 14, 1),
+('El Grullo', 14, 1),
+('Guachinango', 14, 1),
+('Guadalajara', 14, 1),
+('Hostotipaquillo', 14, 1),
+('Huejúcar', 14, 1),
+('Huejuquilla el Alto', 14, 1),
+('La Huerta', 14, 1),
+('Ixtlahuacán de los Membrillos', 14, 1),
+('Ixtlahuacán del Río', 14, 1),
+('Jalostotitlán', 14, 1),
+('Jamay', 14, 1),
+('Jesús María', 14, 1),
+('Jilotlán de los Dolores', 14, 1),
+('Jocotepec', 14, 1),
+('Juanacatlán', 14, 1),
+('Juchitlán', 14, 1),
+('Lagos de Moreno', 14, 1),
+('El Limón', 14, 1),
+('Magdalena', 14, 1),
+('Santa María del Oro', 14, 1),
+('La Manzanilla de la Paz', 14, 1),
+('Mascota', 14, 1),
+('Mazamitla', 14, 1),
+('Mexticacán', 14, 1),
+('Mezquitic', 14, 1),
+('Mixtlán', 14, 1),
+('Ocotlán', 14, 1),
+('Ojuelos de Jalisco', 14, 1),
+('Pihuamo', 14, 1),
+('Poncitlán', 14, 1),
+('Puerto Vallarta', 14, 1),
+('Villa Purificación', 14, 1),
+('Quitupan', 14, 1),
+('El Salto', 14, 1),
+('San Cristóbal de la Barranca', 14, 1),
+('San Diego de Alejandría', 14, 1),
+('San Juan de los Lagos', 14, 1),
+('San Julián', 14, 1),
+('San Marcos', 14, 1),
+('San Martín de Bolaños', 14, 1),
+('San Martín Hidalgo', 14, 1),
+('San Miguel el Alto', 14, 1),
+('Gómez Farías', 14, 1),
+('San Sebastián del Oeste', 14, 1),
+('Santa María de los Ángeles', 14, 1),
+('Sayula', 14, 1),
+('Tala', 14, 1),
+('Talpa de Allende', 14, 1),
+('Tamazula de Gordiano', 14, 1),
+('Tapalpa', 14, 1),
+('Tecalitlán', 14, 1),
+('Tecolotlán', 14, 1),
+('Techaluta de Montenegro', 14, 1),
+('Tenamaxtlán', 14, 1),
+('Teocaltiche', 14, 1),
+('Teocuitatlán de Corona', 14, 1),
+('Tepatitlán de Morelos', 14, 1),
+('Tequila', 14, 1),
+('Teuchitlán', 14, 1),
+('Tizapán el Alto', 14, 1),
+('Tlajomulco de Zúñiga', 14, 1),
+('San Pedro Tlaquepaque', 14, 1),
+('Tolimán', 14, 1),
+('Tomatlán', 14, 1),
+('Tonalá', 14, 1),
+('Tonaya', 14, 1),
+('Tonila', 14, 1),
+('Totatiche', 14, 1),
+('Tototlán', 14, 1),
+('Tuxcacuesco', 14, 1),
+('Tuxcueca', 14, 1),
+('Tuxpan', 14, 1),
+('Unión de San Antonio', 14, 1),
+('Unión de Tula', 14, 1),
+('Valle de Guadalupe', 14, 1),
+('Valle de Juárez', 14, 1),
+('San Gabriel', 14, 1),
+('Villa Corona', 14, 1),
+('Villa Guerrero', 14, 1),
+('Villa Hidalgo', 14, 1),
+('Cañadas de Obregón', 14, 1),
+('Yahualica de González Gallo', 14, 1),
+('Zacoalco de Torres', 14, 1),
+('Zapopan', 14, 1),
+('Zapotiltic', 14, 1),
+('Zapotitlán de Vadillo', 14, 1),
+('Zapotlán del Rey', 14, 1),
+('Zapotlanejo', 14, 1),
+('San Ignacio Cerro Gordo', 14, 1),
+('El Arenal', 14, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acambay de Ruiz Castañeda', 15, 1),
+('Acolman', 15, 1),
+('Aculco', 15, 1),
+('Almoloya de Alquisiras', 15, 1),
+('Almoloya de Juárez', 15, 1),
+('Almoloya del Río', 15, 1),
+('Amanalco', 15, 1),
+('Amatepec', 15, 1),
+('Amecameca', 15, 1),
+('Apaxco', 15, 1),
+('Atenco', 15, 1),
+('Atizapán', 15, 1),
+('Atizapán de Zaragoza', 15, 1),
+('Atlacomulco', 15, 1),
+('Atlautla', 15, 1),
+('Axapusco', 15, 1),
+('Ayapango', 15, 1),
+('Calimaya', 15, 1),
+('Capulhuac', 15, 1),
+('Coacalco de Berriozábal', 15, 1),
+('Coatepec Harinas', 15, 1),
+('Cocotitlán', 15, 1),
+('Coyotepec', 15, 1),
+('Cuautitlán', 15, 1),
+('Cuautitlán Izcalli', 15, 1),
+('Chalco', 15, 1),
+('Chapa de Mota', 15, 1),
+('Chapultepec', 15, 1),
+('Chiautla', 15, 1),
+('Chicoloapan', 15, 1),
+('Chiconcuac', 15, 1),
+('Chimalhuacán', 15, 1),
+('Donato Guerra', 15, 1),
+('Ecatepec de Morelos', 15, 1),
+('Ecatzingo', 15, 1),
+('Huehuetoca', 15, 1),
+('Hueypoxtla', 15, 1),
+('Huixquilucan', 15, 1),
+('Isidro Fabela', 15, 1),
+('Ixtapaluca', 15, 1),
+('Ixtapan de la Sal', 15, 1),
+('Ixtapan del Oro', 15, 1),
+('Ixtlahuaca', 15, 1),
+('Xalatlaco', 15, 1),
+('Jaltenco', 15, 1),
+('Jilotepec', 15, 1),
+('Jilotzingo', 15, 1),
+('Jiquipilco', 15, 1),
+('Jocotitlán', 15, 1),
+('Joquicingo', 15, 1),
+('Juchitepec', 15, 1),
+('Lerma', 15, 1),
+('Malinalco', 15, 1),
+('Melchor Ocampo', 15, 1),
+('Metepec', 15, 1),
+('Mexicaltzingo', 15, 1),
+('Morelos', 15, 1),
+('Naucalpan de Juárez', 15, 1),
+('Nextlalpan', 15, 1),
+('Nezahualcóyotl', 15, 1),
+('Nicolás Romero', 15, 1),
+('Nopaltepec', 15, 1),
+('Ocoyoacac', 15, 1),
+('Ocuilan', 15, 1),
+('El Oro', 15, 1),
+('Otumba', 15, 1),
+('Otzoloapan', 15, 1),
+('Otzolotepec', 15, 1),
+('Ozumba', 15, 1),
+('Papalotla', 15, 1),
+('La Paz', 15, 1),
+('Polotitlán', 15, 1),
+('Rayón', 15, 1),
+('San Antonio la Isla', 15, 1),
+('San Felipe del Progreso', 15, 1),
+('San Martín de las Pirámides', 15, 1),
+('San Mateo Atenco', 15, 1),
+('San Simón de Guerrero', 15, 1),
+('Santo Tomás', 15, 1),
+('Soyaniquilpan de Juárez', 15, 1),
+('Sultepec', 15, 1),
+('Tecámac', 15, 1),
+('Tejupilco', 15, 1),
+('Temamatla', 15, 1),
+('Temascalapa', 15, 1),
+('Temascalcingo', 15, 1),
+('Temascaltepec', 15, 1),
+('Temoaya', 15, 1),
+('Tenancingo', 15, 1),
+('Tenango del Aire', 15, 1),
+('Tenango del Valle', 15, 1),
+('Teoloyucan', 15, 1),
+('Teotihuacán', 15, 1),
+('Tepetlaoxtoc', 15, 1),
+('Tepetlixpa', 15, 1),
+('Tepotzotlán', 15, 1),
+('Tequixquiac', 15, 1),
+('Texcaltitlán', 15, 1),
+('Texcalyacac', 15, 1),
+('Texcoco', 15, 1),
+('Tezoyuca', 15, 1),
+('Tianguistenco', 15, 1),
+('Timilpan', 15, 1),
+('Tlalmanalco', 15, 1),
+('Tlalnepantla de Baz', 15, 1),
+('Tlatlaya', 15, 1),
+('Toluca', 15, 1),
+('Tonatico', 15, 1),
+('Tultepec', 15, 1),
+('Tultitlán', 15, 1),
+('Valle de Bravo', 15, 1),
+('Villa de Allende', 15, 1),
+('Villa del Carbón', 15, 1),
+('Villa Guerrero', 15, 1),
+('Villa Victoria', 15, 1),
+('Xonacatlán', 15, 1),
+('Zacazonapan', 15, 1),
+('Zacualpan', 15, 1),
+('Zinacantepec', 15, 1),
+('Zumpahuacán', 15, 1),
+('Zumpango', 15, 1),
+('Valle de Chalco Solidaridad', 15, 1),
+('Luvianos', 15, 1),
+('San José del Rincón', 15, 1),
+('Tonanitla', 15, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acuitzio', 16, 1),
+('Aguililla', 16, 1),
+('Álvaro Obregón', 16, 1),
+('Angamacutiro', 16, 1),
+('Angangueo', 16, 1),
+('Apatzingán', 16, 1),
+('Áporo', 16, 1),
+('Aquila', 16, 1),
+('Ario', 16, 1),
+('Arteaga', 16, 1),
+('Briseñas', 16, 1),
+('Buenavista', 16, 1),
+('Carácuaro', 16, 1),
+('Coahuayana', 16, 1),
+('Coalcomán de Vázquez Pallares', 16, 1),
+('Coeneo', 16, 1),
+('Cojumatlán de Régules', 16, 1),
+('Contepec', 16, 1),
+('Copándaro', 16, 1),
+('Cotija', 16, 1),
+('Cuitzeo', 16, 1),
+('Charapan', 16, 1),
+('Charo', 16, 1),
+('Chavinda', 16, 1),
+('Cherán', 16, 1),
+('Chinicuila', 16, 1),
+('Chucándiro', 16, 1),
+('Churintzio', 16, 1),
+('Churumuco', 16, 1),
+('Ecuandureo', 16, 1),
+('Epitacio Huerta', 16, 1),
+('Erongarícuaro', 16, 1),
+('Gabriel Zamora', 16, 1),
+('Hidalgo', 16, 1),
+('La Huacana', 16, 1),
+('Huandacareo', 16, 1),
+('Huaniqueo', 16, 1),
+('Huetamo', 16, 1),
+('Huiramba', 16, 1),
+('Indaparapeo', 16, 1),
+('Irimbo', 16, 1),
+('Ixtlán', 16, 1),
+('Jacona', 16, 1),
+('Jiménez', 16, 1),
+('Jiquilpan', 16, 1),
+('Juárez', 16, 1),
+('Jungapeo', 16, 1),
+('Lagunillas', 16, 1),
+('Madero', 16, 1),
+('Maravatío', 16, 1),
+('Marcos Castellanos', 16, 1),
+('Lázaro Cárdenas', 16, 1),
+('Morelia', 16, 1),
+('Morelos', 16, 1),
+('Múgica', 16, 1),
+('Nahuátzen', 16, 1),
+('Nocupétaro', 16, 1),
+('Nuevo Parangaricutiro', 16, 1),
+('Nuevo Urecho', 16, 1),
+('Numarán', 16, 1),
+('Ocampo', 16, 1),
+('Pajacuarán', 16, 1),
+('Panindícuaro', 16, 1),
+('Parácuaro', 16, 1),
+('Paracho', 16, 1),
+('Pátzcuaro', 16, 1),
+('Penjamillo', 16, 1),
+('Peribán', 16, 1),
+('La Piedad', 16, 1),
+('Purépero', 16, 1),
+('Puruándiro', 16, 1),
+('Queréndaro', 16, 1),
+('Quiroga', 16, 1),
+('Sahuayo', 16, 1),
+('Salvador Escalante', 16, 1),
+('Santa Ana Maya', 16, 1),
+('Senguio', 16, 1),
+('Susupuato', 16, 1),
+('Tacámbaro', 16, 1),
+('Tancítaro', 16, 1),
+('Tangamandapio', 16, 1),             -- también conocido como "Santiago Tangamandapio"
+('Tangancícuaro', 16, 1),
+('Tanhuato', 16, 1),
+('Taretan', 16, 1),
+('Tarímbaro', 16, 1),
+('Tepalcatepec', 16, 1),
+('Tingambato', 16, 1),
+('Tingüindín', 16, 1),
+('Tiquicheo de Nicolás Romero', 16, 1),
+('Tlalpujahua', 16, 1),
+('Tlazazalca', 16, 1),
+('Tocumbo', 16, 1),
+('Tumbiscatío', 16, 1),
+('Turicato', 16, 1),
+('Tuxpan', 16, 1),
+('Tuzantla', 16, 1),
+('Tzintzuntzan', 16, 1),
+('Tzitzio', 16, 1),
+('Uruapan', 16, 1),
+('Venustiano Carranza', 16, 1),
+('Villamar', 16, 1),
+('Vista Hermosa', 16, 1),
+('Yurécuaro', 16, 1),
+('Zacapu', 16, 1),
+('Zamora', 16, 1),
+('Zináparo', 16, 1),
+('Zinapécuaro', 16, 1),
+('Ziracuaretiro', 16, 1),
+('Zitácuaro', 16, 1),
+('José Sixto Verduzco', 16, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Amacuzac', 17, 1),
+('Atlatlahucan', 17, 1),
+('Axochiapan', 17, 1),
+('Ayala', 17, 1),
+('Coatetelco', 17, 1),
+('Coatlán del Río', 17, 1),
+('Cuautla', 17, 1),
+('Cuernavaca', 17, 1),
+('Emiliano Zapata', 17, 1),
+('Huitzilac', 17, 1),
+('Hueyapan', 17, 1),
+('Jantetelco', 17, 1),
+('Jiutepec', 17, 1),
+('Jojutla', 17, 1),
+('Jonacatepec de Leandro Valle', 17, 1),
+('Mazatepec', 17, 1),
+('Miacatlán', 17, 1),
+('Ocuituco', 17, 1),
+('Puente de Ixtla', 17, 1),
+('Temixco', 17, 1),
+('Temoac', 17, 1),
+('Tepalcingo', 17, 1),
+('Tepoztlán', 17, 1),
+('Tetecala', 17, 1),
+('Tetela del Volcán', 17, 1),
+('Tlalnepantla', 17, 1),
+('Tlaltizapán de Zapata', 17, 1),
+('Tlaquiltenango', 17, 1),
+('Tlayacapan', 17, 1),
+('Totolapan', 17, 1),
+('Xochitepec', 17, 1),
+('Xoxocotla', 17, 1),
+('Yautepec', 17, 1),
+('Yecapixtla', 17, 1),
+('Zacatepec', 17, 1),
+('Zacualpan de Amilpas', 17, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acaponeta', 18, 1),
+('Ahuacatlán', 18, 1),
+('Amatlán de Cañas', 18, 1),
+('Bahía de Banderas', 18, 1),
+('Compostela', 18, 1),
+('El Nayar', 18, 1),
+('Huajicori', 18, 1),
+('Ixtlán del Río', 18, 1),
+('Jala', 18, 1),
+('La Yesca', 18, 1),
+('Rosamorada', 18, 1),
+('Ruiz', 18, 1),
+('San Blas', 18, 1),
+('San Pedro Lagunillas', 18, 1),
+('Santa María del Oro', 18, 1),
+('Santiago Ixcuintla', 18, 1),
+('Tecuala', 18, 1),
+('Tepic', 18, 1),
+('Tuxpan', 18, 1),
+('Xalisco', 18, 1);
+
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Abasolo', 19, 1),
+('Agualeguas', 19, 1),
+('Los Aldamas', 19, 1),
+('Allende', 19, 1),
+('Anáhuac', 19, 1),
+('Apodaca', 19, 1),
+('Aramberri', 19, 1),
+('Bustamante', 19, 1),
+('Cadereyta Jiménez', 19, 1),
+('Carmen', 19, 1),              -- también conocido como "El Carmen"
+('Cerralvo', 19, 1),
+('Ciénega de Flores', 19, 1),
+('China', 19, 1),
+('Doctor Arroyo', 19, 1),
+('Doctor Coss', 19, 1),
+('Doctor González', 19, 1),
+('Galeana', 19, 1),
+('García', 19, 1),
+('General Bravo', 19, 1),
+('General Escobedo', 19, 1),
+('General Terán', 19, 1),
+('General Treviño', 19, 1),
+('General Zaragoza', 19, 1),
+('General Zuazua', 19, 1),
+('Guadalupe', 19, 1),
+('Hidalgo', 19, 1),
+('Los Herreras', 19, 1),
+('Higueras', 19, 1),
+('Hualahuises', 19, 1),
+('Iturbide', 19, 1),
+('Juárez', 19, 1),
+('Lampazos de Naranjo', 19, 1),
+('Linares', 19, 1),
+('Marín', 19, 1),
+('Melchor Ocampo', 19, 1),
+('Mier y Noriega', 19, 1),
+('Mina', 19, 1),
+('Montemorelos', 19, 1),
+('Monterrey', 19, 1),
+('Parás', 19, 1),
+('Pesquería', 19, 1),
+('Los Ramones', 19, 1),
+('Rayones', 19, 1),
+('Sabinas Hidalgo', 19, 1),
+('Salinas Victoria', 19, 1),
+('San Nicolás de los Garza', 19, 1),
+('San Pedro Garza García', 19, 1),
+('Santa Catarina', 19, 1),
+('Santiago', 19, 1),
+('Vallecillo', 19, 1),
+('Villaldama', 19, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Amealco de Bonfil', 22, 1),
+('Arroyo Seco', 22, 1),
+('Cadereyta de Montes', 22, 1),
+('Colón', 22, 1),
+('Corregidora', 22, 1),
+('El Marqués', 22, 1),
+('Ezequiel Montes', 22, 1),
+('Huimilpan', 22, 1),
+('Jalpan de Serra', 22, 1),
+('Landa de Matamoros', 22, 1),
+('Pedro Escobedo', 22, 1),
+('Peñamiller', 22, 1),
+('Pinal de Amoles', 22, 1),
+('Querétaro', 22, 1),
+('San Joaquín', 22, 1),
+('San Juan del Río', 22, 1),
+('Tequisquiapan', 22, 1),
+('Tolimán', 22, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Oaxaca de Juárez', 20, 1),
+('Santa Lucía del Camino', 20, 1),
+('Santa Cruz Xoxocotlán', 20, 1),
+('Santa María Atzompa', 20, 1),
+('San Jacinto Amilpas', 20, 1),
+('San Sebastián Tutla', 20, 1),
+('Santa María del Tule', 20, 1),
+('Tlacolula de Matamoros', 20, 1),
+('Ocotlán de Morelos', 20, 1),
+('Ejutla de Crespo', 20, 1),
+('Etla', 20, 1),
+
+('San Juan Bautista Tuxtepec', 20, 1),
+('Loma Bonita', 20, 1),
+('Teotitlán de Flores Magón', 20, 1),
+('San Juan Bautista Cuicatlán', 20, 1),
+
+('Juchitán de Zaragoza', 20, 1),
+('Salina Cruz', 20, 1),
+('Santo Domingo Tehuantepec', 20, 1),
+('Matías Romero Avendaño', 20, 1),
+
+('Santa María Huatulco', 20, 1),
+('San Pedro Pochutla', 20, 1),
+('San Pedro Mixtepec (Juquila)', 20, 1),
+('Santa María Colotepec', 20, 1),
+
+('Heroica Ciudad de Huajuapan de León', 20, 1),
+('Heroica Ciudad de Tlaxiaco', 20, 1),
+('Asunción Nochixtlán', 20, 1),
+('Putla Villa de Guerrero', 20, 1),
+('Miahuatlán de Porfirio Díaz', 20, 1),
+('Santiago Pinotepa Nacional', 20, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Puebla', 21, 1),
+('Amozoc', 21, 1),
+('Cuautlancingo', 21, 1),
+('Coronango', 21, 1),
+('San Andrés Cholula', 21, 1),
+('San Pedro Cholula', 21, 1),
+('San Gregorio Atzompa', 21, 1),
+('San Miguel Xoxtla', 21, 1),
+('Ocoyucan', 21, 1),
+('Huejotzingo', 21, 1),
+('Atlixco', 21, 1),
+
+('Tehuacán', 21, 1),
+('Tepeaca', 21, 1),
+('Tecamachalco', 21, 1),
+('Acatzingo', 21, 1),
+('Acajete', 21, 1),
+('San Salvador El Verde', 21, 1),
+('San Martín Texmelucan', 21, 1),
+
+('Izúcar de Matamoros', 21, 1),
+('Teziutlán', 21, 1),
+('Zacatlán', 21, 1),
+('Huauchinango', 21, 1),
+('Xicotepec', 21, 1),
+('Chignahuapan', 21, 1),
+('San José Chiapa', 21, 1),
+('Libres', 21, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Benito Juárez', 23, 1),         -- Cancún
+('Solidaridad', 23, 1),           -- Playa del Carmen
+('Tulum', 23, 1),
+('Cozumel', 23, 1),
+('Isla Mujeres', 23, 1),
+('Puerto Morelos', 23, 1),
+('Othón P. Blanco', 23, 1),       -- Chetumal
+('Bacalar', 23, 1),
+('Felipe Carrillo Puerto', 23, 1),
+('José María Morelos', 23, 1),
+('Lázaro Cárdenas', 23, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('San Luis Potosí', 24, 1),
+('Soledad de Graciano Sánchez', 24, 1),
+('Villa de Reyes', 24, 1),        -- polo industrial BMW/cluster automotriz
+('Ciudad Valles', 24, 1),
+('Rioverde', 24, 1),
+('Matehuala', 24, 1),
+('Tamazunchale', 24, 1),
+('Xilitla', 24, 1),               -- turismo surrealista
+('Tamasopo', 24, 1),
+('Tamuín', 24, 1),
+('Ébano', 24, 1),
+('Santa María del Río', 24, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Culiacán', 25, 1),
+('Mazatlán', 25, 1),
+('Ahome', 25, 1),                 -- Los Mochis
+('Guasave', 25, 1),
+('Navolato', 25, 1),
+('Salvador Alvarado', 25, 1),     -- Guamúchil
+('El Fuerte', 25, 1),
+('Sinaloa', 25, 1),               -- Sinaloa de Leyva
+('Escuinapa', 25, 1),
+('Rosario', 25, 1),
+('Angostura', 25, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Aconchi', 26, 1),
+('Agua Prieta', 26, 1),
+('Álamos', 26, 1),
+('Altar', 26, 1),
+('Arivechi', 26, 1),
+('Arizpe', 26, 1),
+('Atil', 26, 1),
+('Bacadéhuachi', 26, 1),
+('Bacanora', 26, 1),
+('Bacerac', 26, 1),
+('Bacoachi', 26, 1),
+('Bácum', 26, 1),
+('Banámichi', 26, 1),
+('Baviácora', 26, 1),
+('Bavispe', 26, 1),
+('Benito Juárez', 26, 1),
+('Caborca', 26, 1),
+('Cajeme', 26, 1),
+('Cananea', 26, 1),
+('Carbó', 26, 1),
+('Cucurpe', 26, 1),
+('Cumpas', 26, 1),
+('Divisaderos', 26, 1),
+('Empalme', 26, 1),
+('Etchojoa', 26, 1),
+('Fronteras', 26, 1),
+('General Plutarco Elías Calles', 26, 1),
+('Granados', 26, 1),
+('Guaymas', 26, 1),
+('Hermosillo', 26, 1),
+('Huachinera', 26, 1),
+('Huásabas', 26, 1),
+('Huatabampo', 26, 1),
+('Huépac', 26, 1),
+('Ímuris', 26, 1),
+('La Colorada', 26, 1),
+('Magdalena', 26, 1),
+('Mazatán', 26, 1),
+('Moctezuma', 26, 1),
+('Naco', 26, 1),
+('Nácori Chico', 26, 1),
+('Nacozari de García', 26, 1),
+('Nogales', 26, 1),
+('Ónavas', 26, 1),
+('Opodepe', 26, 1),
+('Oquitoa', 26, 1),
+('Pitiquito', 26, 1),
+('Puerto Peñasco', 26, 1),
+('Quiriego', 26, 1),
+('Rayón', 26, 1),
+('Rosario', 26, 1),
+('Sahuaripa', 26, 1),
+('San Felipe de Jesús', 26, 1),
+('San Ignacio Río Muerto', 26, 1),
+('San Javier', 26, 1),
+('San Luis Río Colorado', 26, 1),
+('San Miguel de Horcasitas', 26, 1),
+('San Pedro de la Cueva', 26, 1),
+('Santa Ana', 26, 1),
+('Santa Cruz', 26, 1),
+('Saríc', 26, 1),
+('Soyopa', 26, 1),
+('Suaqui Grande', 26, 1),
+('Tepache', 26, 1),
+('Trincheras', 26, 1),
+('Tubutama', 26, 1),
+('Ures', 26, 1),
+('Villa Hidalgo', 26, 1),
+('Villa Pesqueira', 26, 1),
+('Yécora', 26, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Balancán', 27, 1),
+('Cárdenas', 27, 1),
+('Centla', 27, 1),
+('Centro', 27, 1),
+('Comalcalco', 27, 1),
+('Cunduacán', 27, 1),
+('Emiliano Zapata', 27, 1),
+('Huimanguillo', 27, 1),
+('Jalapa', 27, 1),
+('Jalpa de Méndez', 27, 1),
+('Jonuta', 27, 1),
+('Macuspana', 27, 1),
+('Nacajuca', 27, 1),
+('Paraíso', 27, 1),
+('Tacotalpa', 27, 1),
+('Teapa', 27, 1),
+('Tenosique', 27, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Abasolo', 28, 1),
+('Aldama', 28, 1),
+('Altamira', 28, 1),
+('Antiguo Morelos', 28, 1),
+('Burgos', 28, 1),
+('Bustamante', 28, 1),
+('Camargo', 28, 1),
+('Casas', 28, 1),
+('Ciudad Madero', 28, 1),
+('Cruillas', 28, 1),
+('El Mante', 28, 1),
+('González', 28, 1),
+('Gómez Farías', 28, 1),
+('Güémez', 28, 1),
+('Guerrero', 28, 1),
+('Gustavo Díaz Ordaz', 28, 1),
+('Hidalgo', 28, 1),
+('Jaumave', 28, 1),
+('Jiménez', 28, 1),
+('Llera', 28, 1),
+('Mainero', 28, 1),
+('Matamoros', 28, 1),
+('Méndez', 28, 1),
+('Mier', 28, 1),
+('Miguel Alemán', 28, 1),
+('Miquihuana', 28, 1),
+('Nuevo Laredo', 28, 1),
+('Nuevo Morelos', 28, 1),
+('Ocampo', 28, 1),
+('Padilla', 28, 1),
+('Palmillas', 28, 1),
+('Reynosa', 28, 1),
+('Río Bravo', 28, 1),
+('San Carlos', 28, 1),
+('San Fernando', 28, 1),
+('San Nicolás', 28, 1),
+('Soto la Marina', 28, 1),
+('Tampico', 28, 1),
+('Tula', 28, 1),
+('Valle Hermoso', 28, 1),
+('Victoria', 28, 1),
+('Villagrán', 28, 1),
+('Xicoténcatl', 28, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Acuamanala de Miguel Hidalgo', 29, 1),
+('Amaxac de Guerrero', 29, 1),
+('Apetatitlán de Antonio Carvajal', 29, 1),
+('Apizaco', 29, 1),
+('Atlangatepec', 29, 1),
+('Altzayanca', 29, 1),
+('Calpulalpan', 29, 1),
+('El Carmen Tequexquitla', 29, 1),
+('Cuapiaxtla', 29, 1),
+('Chiautempan', 29, 1),
+('Contla de Juan Cuamatzi', 29, 1),
+('Emiliano Zapata', 29, 1),
+('Españita', 29, 1),
+('Huamantla', 29, 1),
+('Hueyotlipan', 29, 1),
+('Ixtacuixtla de Mariano Matamoros', 29, 1),
+('Ixtenco', 29, 1),
+('La Magdalena Tlaltelulco', 29, 1),
+('Lázaro Cárdenas', 29, 1),
+('Mazatecochco de José María Morelos', 29, 1),
+('Muñoz de Domingo Arenas', 29, 1),
+('Nanacamilpa de Mariano Arista', 29, 1),
+('Nativitas', 29, 1),
+('Nopalucan', 29, 1),
+('Panotla', 29, 1),
+('Papalotla de Xicohténcatl', 29, 1),
+('San Damián Texoloc', 29, 1),
+('San Francisco Tetlanohcan', 29, 1),
+('San Jerónimo Zacualpan', 29, 1),
+('San José Teacalco', 29, 1),
+('San Juan Huactzinco', 29, 1),
+('San Lorenzo Axocomanitla', 29, 1),
+('San Lucas Tecopilco', 29, 1),
+('San Pablo del Monte', 29, 1),
+('Sanctórum de Lázaro Cárdenas', 29, 1),
+('Santa Apolonia Teacalco', 29, 1),
+('Santa Catarina Ayometla', 29, 1),
+('Santa Cruz Quilehtla', 29, 1),
+('Santa Cruz Tlaxcala', 29, 1),
+('Santa Isabel Xiloxoxtla', 29, 1),
+('Tenancingo', 29, 1),
+('Teolocholco', 29, 1),
+('Tepetitla de Lardizábal', 29, 1),
+('Tepeyanco', 29, 1),
+('Terrenate', 29, 1),
+('Tetla de la Solidaridad', 29, 1),
+('Tetlatlahuca', 29, 1),
+('Tlaxcala', 29, 1),
+('Tlaxco', 29, 1),
+('Tocatlán', 29, 1),
+('Totolac', 29, 1),
+('Tzompantepec', 29, 1),
+('Xaloztoc', 29, 1),
+('Xaltocan', 29, 1),
+('Xicohtzinco', 29, 1),
+('Yauhquemehcan', 29, 1),
+('Zacatelco', 29, 1),
+('Zitlaltepec de Trinidad Sánchez Santos', 29, 1),
+('Benito Juárez', 29, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Apozol', 32, 1),
+('Apulco', 32, 1),
+('Atolinga', 32, 1),
+('Calera', 32, 1),
+('Cañitas de Felipe Pescador', 32, 1),
+('Chalchihuites', 32, 1),
+('Concepción del Oro', 32, 1),
+('Cuauhtémoc', 32, 1),
+('El Plateado de Joaquín Amaro', 32, 1),
+('El Salvador', 32, 1),
+('Fresnillo', 32, 1),
+('Genaro Codina', 32, 1),
+('General Enrique Estrada', 32, 1),
+('General Francisco R. Murguía', 32, 1),
+('General Pánfilo Natera', 32, 1),
+('Guadalupe', 32, 1),
+('Huanusco', 32, 1),
+('Jalpa', 32, 1),
+('Jerez', 32, 1),
+('Jiménez del Teul', 32, 1),
+('Juan Aldama', 32, 1),
+('Juchipila', 32, 1),
+('Loreto', 32, 1),
+('Luis Moya', 32, 1),
+('Mazapil', 32, 1),
+('Melchor Ocampo', 32, 1),
+('Miguel Auza', 32, 1),
+('Momax', 32, 1),
+('Monte Escobedo', 32, 1),
+('Morelos', 32, 1),
+('Moyahua de Estrada', 32, 1),
+('Nochistlán de Mejía', 32, 1),
+('Noria de Ángeles', 32, 1),
+('Ojocaliente', 32, 1),
+('Pánuco', 32, 1),
+('Pinos', 32, 1),
+('Río Grande', 32, 1),
+('Sain Alto', 32, 1),
+('Santa María de la Paz', 32, 1),
+('Sombrerete', 32, 1),
+('Susticacán', 32, 1),
+('Tabasco', 32, 1),
+('Tepechitlán', 32, 1),
+('Tepetongo', 32, 1),
+('Teúl de González Ortega', 32, 1),
+('Tlaltenango de Sánchez Román', 32, 1),
+('Trancoso', 32, 1),
+('Valparaíso', 32, 1),
+('Vetagrande', 32, 1),
+('Villa de Cos', 32, 1),
+('Villa García', 32, 1),
+('Villa González Ortega', 32, 1),
+('Villa Hidalgo', 32, 1),
+('Villanueva', 32, 1),
+('Zacatecas', 32, 1),
+('Florencia de Benito Juárez', 32, 1),
+('Trinidad García de la Cadena', 32, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Mérida', 31, 1),
+('Kanasín', 31, 1),
+('Umán', 31, 1),
+('Progreso', 31, 1),
+('Valladolid', 31, 1),
+('Tizimín', 31, 1),
+('Ticul', 31, 1),
+('Tekax', 31, 1),
+('Motul', 31, 1),
+('Hunucmá', 31, 1),
+('Izamal', 31, 1),
+('Tinum', 31, 1),          -- Chichén Itzá
+('Chemax', 31, 1),
+('Temozón', 31, 1),
+('Oxkutzcab', 31, 1),
+('Maxcanú', 31, 1),
+('Peto', 31, 1),
+('Tzucacab', 31, 1),
+('Conkal', 31, 1),
+('Chicxulub Pueblo', 31, 1),
+('Acanceh', 31, 1),
+('Baca', 31, 1);
+
+INSERT INTO municipios (nombre, estado_id, activo) VALUES
+('Veracruz', 30, 1),
+('Boca del Río', 30, 1),
+('Xalapa', 30, 1),
+('Coatzacoalcos', 30, 1),
+('Minatitlán', 30, 1),
+('Cosoleacaque', 30, 1),
+('Nanchital de Lázaro Cárdenas del Río', 30, 1),
+('Agua Dulce', 30, 1),
+('Las Choapas', 30, 1),
+('Poza Rica de Hidalgo', 30, 1),
+('Tuxpan', 30, 1),
+('Papantla', 30, 1),
+('Martínez de la Torre', 30, 1),
+('Tlapacoyan', 30, 1),
+('Córdoba', 30, 1),
+('Orizaba', 30, 1),
+('Fortín', 30, 1),
+('Ixtaczoquitlán', 30, 1),
+('Río Blanco', 30, 1),
+('Camerino Z. Mendoza', 30, 1),
+('Medellín de Bravo', 30, 1),
+('La Antigua', 30, 1),
+('Alvarado', 30, 1),
+('Úrsulo Galván', 30, 1),
+('San Andrés Tuxtla', 30, 1),
+('Santiago Tuxtla', 30, 1),
+('Catemaco', 30, 1),
+('Cosamaloapan de Carpio', 30, 1),
+('Tierra Blanca', 30, 1),
+('Tres Valles', 30, 1),
+('Pánuco', 30, 1),
+('Tantoyuca', 30, 1),
+('Álamo Temapache', 30, 1),
+('Tempoal', 30, 1),
+('Perote', 30, 1),
+('Coatepec', 30, 1),
+('Banderilla', 30, 1),
+('Emiliano Zapata', 30, 1),
+('Naolinco', 30, 1);
+
+COMMIT;
