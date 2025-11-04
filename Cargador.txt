@@ -1,0 +1,1588 @@
+Cargador
+
+// LoginActivity.kt  (Android, sin Firebase; usa tu backend REST)
+// Requiere permiso de Internet en AndroidManifest.
+// Ajusta BASE_URL si usas emulador (10.0.2.2) o dispositivo físico (IP de tu PC).
+
+package com.example.almapadi
+
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ProgressBar
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.lang.StringBuilder
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+
+class LoginActivity : AppCompatActivity() {
+
+    private lateinit var usuarioEditText: EditText
+    private lateinit var passwordEditText: EditText
+    private lateinit var loginButton: Button
+    private var progressBar: ProgressBar? = null
+
+    // Emulador Android Studio -> 10.0.2.2; Dispositivo físico -> IP de tu PC en la LAN
+    private val BASE_URL = "http://10.0.2.2:3001"
+    private val LOGIN_URL = "$BASE_URL/api/cargador/auth/login"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Si ya tenemos token, saltar login
+        if (!getToken().isNullOrBlank()) {
+            goToOpciones()
+            return
+        }
+
+        setContentView(R.layout.activity_login)
+
+        usuarioEditText = findViewById(R.id.emailEditText)   // usa el id que ya tienes en tu layout
+        passwordEditText = findViewById(R.id.passwordEditText)
+        loginButton = findViewById(R.id.loginButton)
+        progressBar = findViewById<ProgressBar?>(R.id.progressBar)?.apply { visibility = View.GONE }
+
+        loginButton.setOnClickListener {
+            val usuario = usuarioEditText.text.toString().trim()
+            val password = passwordEditText.text.toString().trim()
+
+            if (usuario.isEmpty()) {
+                usuarioEditText.error = "Ingresa nombre de usuario"
+                usuarioEditText.requestFocus()
+                return@setOnClickListener
+            }
+            if (password.isEmpty() || password.length < 6) {
+                passwordEditText.error = "Contraseña mínima de 6 caracteres"
+                passwordEditText.requestFocus()
+                return@setOnClickListener
+            }
+
+            doLogin(usuario, password)
+        }
+    }
+
+    private fun doLogin(usuario: String, contrasena: String) {
+        progressBar?.visibility = View.VISIBLE
+        loginButton.isEnabled = false
+
+        lifecycleScope.launchWhenStarted {
+            try {
+                val payload = JSONObject().apply {
+                    put("usuario", usuario)
+                    put("contrasena", contrasena)
+                }
+                val (code, body) = postJson(LOGIN_URL, payload, null)
+
+                if (code == 200 && !body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val token = json.optString("token", "")
+                    if (token.isNotBlank()) {
+                        saveSession(
+                            token = token,
+                            usuario = json.optString("usuario", ""),
+                            nombre = json.optString("nombre", ""),
+                            rol = json.optInt("rol", 0),
+                            id = json.optInt("id", 0)
+                        )
+                        Toast.makeText(this@LoginActivity, "Inicio de sesión exitoso", Toast.LENGTH_SHORT).show()
+                        goToOpciones()
+                    } else {
+                        Toast.makeText(this@LoginActivity, "Respuesta inválida del servidor", Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    val msg = safeErrorMessage(body) ?: when (code) {
+                        0 -> "Sin respuesta del servidor"
+                        400, 401 -> "Credenciales inválidas"
+                        403 -> "Sin permisos para entrar"
+                        else -> "Error ($code) al iniciar sesión"
+                    }
+                    Toast.makeText(this@LoginActivity, msg, Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@LoginActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally {
+                progressBar?.visibility = View.GONE
+                loginButton.isEnabled = true
+            }
+        }
+    }
+
+    private fun goToOpciones() {
+        val intent = Intent(this, Opciones::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        startActivity(intent)
+        finish()
+    }
+
+    // --- Helpers de red / prefs ---
+
+    private fun postJson(urlStr: String, json: JSONObject, bearerToken: String?): Pair<Int, String?> {
+        var conn: HttpURLConnection? = null
+        return try {
+            val url = URL(urlStr)
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 20000
+                requestMethod = "POST"
+                doInput = true
+                doOutput = true
+                useCaches = false
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
+                if (!bearerToken.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Bearer $bearerToken")
+                }
+            }
+
+            BufferedWriter(OutputStreamWriter(conn.outputStream, StandardCharsets.UTF_8)).use { w ->
+                w.write(json.toString())
+                w.flush()
+            }
+
+            val code = conn.responseCode
+            val response = try {
+                BufferedReader(InputStreamReader(
+                    if (code in 200..299) conn.inputStream else conn.errorStream,
+                    StandardCharsets.UTF_8
+                )).use { br ->
+                    val sb = StringBuilder()
+                    var line: String?
+                    while (br.readLine().also { line = it } != null) sb.append(line)
+                    sb.toString()
+                }
+            } catch (_: Exception) { null }
+
+            Pair(code, response)
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun saveSession(token: String, usuario: String, nombre: String, rol: Int, id: Int) {
+        val prefs = getSharedPreferences("session", MODE_PRIVATE)
+        prefs.edit()
+            .putString("auth_token", token)
+            .putString("usuario", usuario)
+            .putString("nombre", nombre)
+            .putInt("rol", rol)
+            .putInt("user_id", id)
+            .apply()
+    }
+
+    private fun getToken(): String? {
+        val prefs = getSharedPreferences("session", MODE_PRIVATE)
+        return prefs.getString("auth_token", null)
+    }
+
+    private fun safeErrorMessage(body: String?): String? {
+        return try {
+            if (body.isNullOrBlank()) null
+            else JSONObject(body).optString("msg").takeIf { it.isNotBlank() }
+        } catch (_: Exception) { null }
+    }
+}
+
+// Opciones.kt  (Android; valida PIN contra tu backend con el JWT del login)
+
+package com.example.almapadi
+
+import android.content.Intent
+import android.graphics.Typeface
+import android.os.Bundle
+import android.text.InputType
+import android.text.method.PasswordTransformationMethod
+import android.view.View
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.lang.StringBuilder
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.Locale
+
+class Opciones : AppCompatActivity() {
+
+    private val BASE_URL = "http://10.0.2.2:3001"
+    private val VERIFY_PIN_URL = "$BASE_URL/api/mobile/verify-admin-pin"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // Si no hay token, regresa a Login
+        if (getToken().isNullOrBlank()) {
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
+
+        setContentView(R.layout.activity_opciones)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+
+        val btnPreorden = findViewById<ImageView>(R.id.btnPreorden)
+        val btnDescarga = findViewById<ImageView>(R.id.btnDescarga)
+        val btnAgregarProducto = findViewById<ImageButton>(R.id.btnAgregarProducto)
+        val btnAgregarCajas = findViewById<ImageButton>(R.id.btnAgregarCajas)
+
+        btnPreorden.setOnClickListener {
+            startActivity(Intent(this, ModuloPedidos::class.java))
+        }
+
+        btnDescarga.setOnClickListener {
+            startActivity(Intent(this, HistorialCargas::class.java))
+        }
+
+        btnAgregarCajas.setOnClickListener {
+            startActivity(Intent(this, Registrodecajas::class.java))
+        }
+
+        btnAgregarProducto.setOnClickListener {
+            pedirContrasenaYVerificar {
+                startActivity(Intent(this, AgregarProductosActivity::class.java))
+            }
+        }
+    }
+
+    private fun pedirContrasenaYVerificar(onSuccess: () -> Unit) {
+        val input = EditText(this).apply {
+            hint = "PIN"
+            inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            transformationMethod = AsteriskPasswordTransformationMethod()
+            typeface = Typeface.DEFAULT
+            isSingleLine = true
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Confirmación")
+            .setMessage("Ingresa el PIN de administrador")
+            .setView(input)
+            .setPositiveButton("Entrar", null)
+            .setNegativeButton("Cancelar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            input.transformationMethod = AsteriskPasswordTransformationMethod()
+            input.inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            input.typeface = Typeface.DEFAULT
+            input.setSelection(input.text?.length ?: 0)
+
+            val okBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            okBtn.setOnClickListener {
+                val pin = input.text?.toString()?.trim().orEmpty()
+                if (pin.isEmpty()) {
+                    input.error = "Ingresa el PIN"
+                    return@setOnClickListener
+                }
+                verificarPinRemoto(pin) { ok, msg ->
+                    if (ok) {
+                        dialog.dismiss()
+                        onSuccess()
+                    } else {
+                        input.error = msg ?: "PIN incorrecto"
+                        Toast.makeText(this, msg ?: "PIN incorrecto", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        dialog.show()
+    }
+
+    private fun verificarPinRemoto(pin: String, callback: (Boolean, String?) -> Unit) {
+        lifecycleScope.launchWhenStarted {
+            try {
+                val token = getToken()
+                if (token.isNullOrBlank()) {
+                    callback(false, "Sesión expirada. Vuelve a iniciar sesión.")
+                    startActivity(Intent(this@Opciones, LoginActivity::class.java))
+                    finish()
+                    return@launchWhenStarted
+                }
+
+                val payload = JSONObject().apply { put("pin", pin) }
+                val (code, body) = postJson(VERIFY_PIN_URL, payload, token)
+
+                if (code == 200 && !body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val ok = json.optBoolean("ok", false)
+                    if (ok) {
+                        callback(true, "PIN correcto")
+                    } else {
+                        callback(false, json.optString("msg", "PIN incorrecto"))
+                    }
+                } else {
+                    val msg = safeErrorMessage(body) ?: when (code) {
+                        401 -> "PIN incorrecto o token inválido"
+                        403 -> "No tienes permisos para esta acción"
+                        else -> "Error ($code) al verificar PIN"
+                    }
+                    callback(false, msg)
+                }
+            } catch (e: Exception) {
+                callback(false, "Error: ${e.message}")
+            }
+        }
+    }
+
+    /** TransformationMethod para dibujar '*' por cada carácter (no puntos) */
+    class AsteriskPasswordTransformationMethod : PasswordTransformationMethod() {
+        override fun getTransformation(source: CharSequence, view: View): CharSequence {
+            return PasswordCharSequence(source)
+        }
+
+        private class PasswordCharSequence(private val source: CharSequence) : CharSequence {
+            override val length: Int get() = source.length
+            override fun get(index: Int): Char = '*'
+            override fun subSequence(start: Int, end: Int): CharSequence =
+                source.subSequence(start, end)
+        }
+    }
+
+    // --- Helpers de red / prefs ---
+
+    private fun postJson(urlStr: String, json: JSONObject, bearerToken: String?): Pair<Int, String?> {
+        var conn: HttpURLConnection? = null
+        return try {
+            val url = URL(urlStr)
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 20000
+                requestMethod = "POST"
+                doInput = true
+                doOutput = true
+                useCaches = false
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "application/json")
+                if (!bearerToken.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Bearer $bearerToken")
+                }
+            }
+
+            BufferedWriter(OutputStreamWriter(conn.outputStream, StandardCharsets.UTF_8)).use { w ->
+                w.write(json.toString())
+                w.flush()
+            }
+
+            val code = conn.responseCode
+            val response = try {
+                BufferedReader(InputStreamReader(
+                    if (code in 200..299) conn.inputStream else conn.errorStream,
+                    StandardCharsets.UTF_8
+                )).use { br ->
+                    val sb = StringBuilder()
+                    var line: String?
+                    while (br.readLine().also { line = it } != null) sb.append(line)
+                    sb.toString()
+                }
+            } catch (_: Exception) { null }
+
+            Pair(code, response)
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun getToken(): String? {
+        val prefs = getSharedPreferences("session", MODE_PRIVATE)
+        return prefs.getString("auth_token", null)
+    }
+
+    private fun safeErrorMessage(body: String?): String? {
+        return try {
+            if (body.isNullOrBlank()) null
+            else JSONObject(body).optString("msg").takeIf { it.isNotBlank() }
+        } catch (_: Exception) { null }
+    }
+}
+
+
+// ModuloPedidos.kt – versión REST (sin Firestore)
+// Conecta a GET /api/mobile/pedidos/pendientes del backend y muestra la lista.
+// Requiere OkHttp3 y org.json en tu app.
+// Guarda el JWT en SharedPreferences con la clave "AUTH_TOKEN" al iniciar sesión.
+
+package com.example.almapadi
+
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.*
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import okhttp3.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.*
+
+/* ===================== */
+/*  Config & Helpers     */
+/* ===================== */
+
+// ⚠️ Cambia a tu URL real. Si pruebas en emulador Android contra tu PC, usa 10.0.2.2
+private const val API_BASE = "http://10.0.2.2:3001"
+
+object TokenStore {
+    private const val PREFS = "auth_prefs"
+    private const val KEY = "AUTH_TOKEN"
+    fun get(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
+}
+
+/* ===================== */
+/*  Modelos              */
+/* ===================== */
+
+data class PedidoResumen(
+    val id: String,
+    val vendedorUid: String,
+    val vendedorNombre: String,
+    val fechaUnix: Long?,                      // viene de API (items[].fechaUnix)
+    val totalItems: Int,
+    val totalCantidad: Int,
+    val productos: List<Map<String, Any?>>,    // [{nombre, cantidad}]
+    val procesado: Boolean
+)
+
+/* ===================== */
+/*  Activity             */
+/* ===================== */
+
+class ModuloPedidos : AppCompatActivity() {
+
+    private lateinit var rv: RecyclerView
+    private lateinit var adapter: PreconfirmPedidosAdapter
+    private lateinit var progress: ProgressBar
+    private lateinit var tvVacio: TextView
+    private lateinit var edtBuscar: EditText
+
+    private val http by lazy { OkHttpClient() }
+    private var listaOriginal = listOf<PedidoResumen>()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_modulo_pedidos)
+
+        rv = findViewById(R.id.rvPreconfirm)
+        progress = findViewById(R.id.progress)
+        tvVacio = findViewById(R.id.tvVacio)
+        edtBuscar = findViewById(R.id.edtBuscar)
+
+        adapter = PreconfirmPedidosAdapter(
+            onOpenPedido = { pedido -> abrirRegistroInventario(pedido.id) },
+            onVerDetalle = { pedido -> abrirRegistroInventario(pedido.id) }
+        )
+        rv.layoutManager = LinearLayoutManager(this)
+        rv.adapter = adapter
+
+        edtBuscar.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                filtrar(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        cargarPedidosPendientes()
+    }
+
+    private fun cargarPedidosPendientes() {
+        val token = TokenStore.get(this)
+        if (token.isNullOrBlank()) {
+            Toast.makeText(this, "Sesión expirada. Inicia sesión.", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
+
+        progress.visibility = View.VISIBLE
+        tvVacio.visibility = View.GONE
+
+        val url = "$API_BASE/api/mobile/pedidos/pendientes?limit=200"
+        val req = Request.Builder()
+            .url(url)
+            .get()
+            .addHeader("Authorization", "Bearer $token")
+            .addHeader("Accept", "application/json")
+            .build()
+
+        http.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    progress.visibility = View.GONE
+                    tvVacio.text = "Error de red: ${e.message}"
+                    tvVacio.visibility = View.VISIBLE
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val bodyStr = it.body?.string().orEmpty()
+                    if (!it.isSuccessful) {
+                        runOnUiThread {
+                            progress.visibility = View.GONE
+                            tvVacio.text = "Error ${it.code}: $bodyStr"
+                            tvVacio.visibility = View.VISIBLE
+                        }
+                        return
+                    }
+
+                    try {
+                        val json = JSONObject(bodyStr)
+                        val arr = json.optJSONArray("items") ?: JSONArray()
+                        val parsed = mutableListOf<PedidoResumen>()
+
+                        for (i in 0 until arr.length()) {
+                            val o = arr.getJSONObject(i)
+                            val id = o.optString("id")
+                            val vendedorUid = o.optString("vendedorUid")
+                            val vendedorNombre = o.optString("vendedorNombre")
+                            val fechaUnix = if (o.has("fechaUnix") && !o.isNull("fechaUnix"))
+                                o.getLong("fechaUnix") else null
+                            val totalItems = o.optInt("totalItems", 0)
+                            val totalCantidad = o.optInt("totalCantidad", 0)
+                            val procesado = o.optBoolean("procesado", false)
+
+                            val productosJson = o.optJSONArray("productos") ?: JSONArray()
+                            val productos = mutableListOf<Map<String, Any?>>()
+                            for (j in 0 until productosJson.length()) {
+                                val pj = productosJson.getJSONObject(j)
+                                val nombre = pj.optString("nombre", "Producto")
+                                // cantidad puede venir como int/long/double; lo normalizamos a Int
+                                val cantidadAny: Any? = pj.opt("cantidad")
+                                val cantidad = when (cantidadAny) {
+                                    is Int -> cantidadAny
+                                    is Long -> cantidadAny.toInt()
+                                    is Double -> cantidadAny.toInt()
+                                    else -> 0
+                                }
+                                productos += mapOf("nombre" to nombre, "cantidad" to cantidad)
+                            }
+
+                            parsed += PedidoResumen(
+                                id = id,
+                                vendedorUid = vendedorUid,
+                                vendedorNombre = vendedorNombre,
+                                fechaUnix = fechaUnix,
+                                totalItems = totalItems,
+                                totalCantidad = totalCantidad,
+                                productos = productos,
+                                procesado = procesado
+                            )
+                        }
+
+                        runOnUiThread {
+                            listaOriginal = parsed
+                            adapter.submit(parsed)
+                            progress.visibility = View.GONE
+                            tvVacio.visibility = if (parsed.isEmpty()) View.VISIBLE else View.GONE
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            progress.visibility = View.GONE
+                            tvVacio.text = "Error al parsear datos: ${e.message}"
+                            tvVacio.visibility = View.VISIBLE
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun filtrar(q: String) {
+        val query = q.trim().lowercase(Locale.getDefault())
+        if (query.isEmpty()) {
+            adapter.submit(listaOriginal)
+            tvVacio.visibility = if (listaOriginal.isEmpty()) View.VISIBLE else View.GONE
+            return
+        }
+        val filtrada = listaOriginal.filter { p ->
+            val enVendedor = p.vendedorNombre.lowercase().contains(query) ||
+                    p.vendedorUid.lowercase().contains(query)
+            val enProductos = p.productos.any {
+                (it["nombre"] as? String)?.lowercase()?.contains(query) == true
+            }
+            enVendedor || enProductos
+        }
+        adapter.submit(filtrada)
+        tvVacio.visibility = if (filtrada.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun abrirRegistroInventario(pedidoId: String) {
+        val intent = Intent(this, RegistroInventario::class.java)
+        intent.putExtra("pedidoId", pedidoId)
+        startActivity(intent)
+    }
+}
+
+/* ===================== */
+/*  Adapter              */
+/* ===================== */
+
+class PreconfirmPedidosAdapter(
+    private val onOpenPedido: (PedidoResumen) -> Unit,
+    private val onVerDetalle: (PedidoResumen) -> Unit
+) : RecyclerView.Adapter<PreconfirmPedidosAdapter.VH>() {
+
+    private val lista = mutableListOf<PedidoResumen>()
+    private val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+
+    fun submit(nueva: List<PedidoResumen>) {
+        lista.clear()
+        lista.addAll(nueva)
+        notifyDataSetChanged()
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val v = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_preconfirm_pedido, parent, false)
+        return VH(v)
+    }
+
+    override fun getItemCount(): Int = lista.size
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val p = lista[position]
+        holder.bind(
+            p = p,
+            sdf = sdf,
+            onRowClick = { onOpenPedido(p) },
+            onVer = { onVerDetalle(p) }
+        )
+    }
+
+    class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val cb = itemView.findViewById<CheckBox>(R.id.cbSelect)
+        private val tvFecha = itemView.findViewById<TextView>(R.id.tvFecha)
+        private val tvVendedor = itemView.findViewById<TextView>(R.id.tvVendedor)
+        private val tvTotales = itemView.findViewById<TextView>(R.id.tvTotales)
+        private val tvResumen = itemView.findViewById<TextView>(R.id.tvResumen)
+        private val btnVer = itemView.findViewById<Button>(R.id.btnVer)
+
+        fun bind(
+            p: PedidoResumen,
+            sdf: SimpleDateFormat,
+            onRowClick: () -> Unit,
+            onVer: () -> Unit
+        ) {
+            cb.visibility = View.GONE
+
+            val fechaTxt = p.fechaUnix?.let { unix ->
+                val d = Date(unix * 1000)
+                sdf.format(d)
+            } ?: "—"
+            tvFecha.text = fechaTxt
+
+            val mostrar = if (p.vendedorNombre.isNotBlank()) p.vendedorNombre else p.vendedorUid
+            tvVendedor.text = "Vendedor: $mostrar"
+
+            tvTotales.text = "Items: ${p.totalItems}   Cantidad: ${p.totalCantidad}"
+
+            val resumen = if (p.productos.isEmpty()) {
+                "—"
+            } else {
+                p.productos.joinToString(separator = ", ") { m ->
+                    val nombre = (m["nombre"] as? String) ?: "Producto"
+                    val cantidad = (m["cantidad"] as? Int) ?: 0
+                    "• $nombre x$cantidad"
+                }
+            }
+            tvResumen.text = resumen
+
+            itemView.setOnClickListener { onRowClick() }
+            btnVer.setOnClickListener { onVer() }
+        }
+    }
+}
+
+Regisro inventario
+
+package com.example.almapadi
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import androidx.annotation.RequiresPermission
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.example.almapadi.net.*
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.checkbox.MaterialCheckBox
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.math.max
+import java.util.Date
+
+class RegistroInventario : AppCompatActivity() {
+
+    private lateinit var spinnerVendedores: Spinner
+    private lateinit var textCamioneta: TextView
+    private lateinit var textKilometraje: TextView
+    private lateinit var textPlacas: TextView
+    private lateinit var textTituloProximaCarga: TextView
+    private lateinit var textFechaProximaCarga: TextView
+    private lateinit var recyclerProductos: RecyclerView
+    private lateinit var productoAdapter: ProductoAdapter
+    private lateinit var btnCargar: Button
+
+    private var textNombreVendedor: TextView? = null
+    private var textResumenRef: TextView? = null
+
+    private val listaProductos = mutableListOf<Producto>()
+    private val revisados = mutableSetOf<Int>()
+    private var pedidoEstadoInicial: Map<Int, Int>? = null
+
+    private val REQUEST_BLUETOOTH_PERMISSION = 1
+
+    private var pedidoIdArg: Int? = null
+    private var vendedorIdArg: Int? = null
+    private var vendedorActual: Vendedor? = null
+
+    @SuppressLint("MissingInflatedId")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_registro_inventario)
+
+        spinnerVendedores      = findViewById(R.id.spinnerVendedores)
+        textCamioneta          = findViewById(R.id.textCamioneta)
+        textKilometraje        = findViewById(R.id.textKilometraje)
+        textPlacas             = findViewById(R.id.textPlacas)
+        textTituloProximaCarga = findViewById(R.id.textTituloProximaCarga)
+        textFechaProximaCarga  = findViewById(R.id.textFechaProximaCarga)
+        recyclerProductos      = findViewById(R.id.recyclerProductos)
+        btnCargar              = findViewById(R.id.btnCargar)
+        textNombreVendedor     = findViewById(R.id.textNombreVendedor)
+        textResumenRef         = findViewById(R.id.textResumen)
+
+        spinnerVendedores.visibility = View.GONE
+        spinnerVendedores.isEnabled = false
+
+        recyclerProductos.layoutManager = LinearLayoutManager(this)
+        recyclerProductos.setHasFixedSize(true)
+        productoAdapter = ProductoAdapter(
+            data = listaProductos,
+            revisados = revisados,
+            onCantidadCambiada = { actualizarResumen() },
+            cantidadInicialProvider = { p -> pedidoEstadoInicial?.get(p.id) ?: 0 },
+            onSolicitarConfirmacionCambio = { producto, anterior, nueva, confirmar, cancelar ->
+                if (pedidoIdArg == null) { confirmar(); return@ProductoAdapter }
+                val inicial = pedidoEstadoInicial?.get(producto.id) ?: 0
+                if (anterior == inicial && nueva != inicial) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Confirmar actualización")
+                        .setMessage("La cantidad inicial de \"${producto.nombre}\" era $inicial.\n¿Actualizar a $nueva?")
+                        .setPositiveButton("Sí, actualizar") { _, _ -> confirmar() }
+                        .setNegativeButton("Cancelar") { _, _ -> cancelar() }
+                        .show()
+                } else confirmar()
+            }
+        )
+        recyclerProductos.adapter = productoAdapter
+
+        btnCargar.setOnClickListener { confirmarCarga() }
+
+        pedidoIdArg   = intent.getIntExtra("pedidoId", -1).takeIf { it > 0 }
+        vendedorIdArg = intent.getIntExtra("vendedorId", -1).takeIf { it > 0 }
+
+        if (pedidoIdArg != null) {
+            cargarPedidoPorId(pedidoIdArg!!)
+        } else {
+            if (vendedorIdArg != null) {
+                cargarVendedorPorId(vendedorIdArg!!) {
+                    textTituloProximaCarga.text = "Próxima Carga de ${vendedorActual?.nombreCompleto ?: ""}"
+                    textFechaProximaCarga.text = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
+                }
+            } else {
+                Toast.makeText(this, "No se recibió vendedor. No es posible continuar.", Toast.LENGTH_LONG).show()
+                btnCargar.isEnabled = false
+            }
+            cargarProductosSoloNombrePrecio()
+        }
+
+        if (!checkBluetoothPermission()) requestBluetoothPermission() else elegirImpresoraBluetooth { }
+    }
+
+    // ===== API =====
+    private fun cargarVendedorPorId(id: Int, onReady: (() -> Unit)? = null) {
+        lifecycleScope.launch {
+            try {
+                val v = withContext(Dispatchers.IO) { ApiClient.api.getVendedor(id) }
+                vendedorActual = Vendedor(v.id, v.nombreCompleto, v.camioneta, v.kilometraje, v.placas)
+                textNombreVendedor?.text = v.nombreCompleto
+                textCamioneta.text = v.camioneta ?: ""
+                textKilometraje.text = (v.kilometraje ?: 0).toString()
+                textPlacas.text = v.placas ?: ""
+            } catch (e: Exception) {
+                Toast.makeText(this@RegistroInventario, "Error vendedor: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally { onReady?.invoke() }
+        }
+    }
+
+    private fun cargarPedidoPorId(pedidoId: Int) {
+        lifecycleScope.launch {
+            try {
+                val resp = withContext(Dispatchers.IO) { ApiClient.api.getPedido(pedidoId) }
+                vendedorActual = Vendedor(
+                    resp.vendedor.id,
+                    resp.vendedor.nombreCompleto,
+                    resp.vendedor.camioneta,
+                    resp.vendedor.kilometraje,
+                    resp.vendedor.placas
+                )
+                textNombreVendedor?.text = vendedorActual?.nombreCompleto ?: ""
+                textCamioneta.text = vendedorActual?.camioneta ?: ""
+                textKilometraje.text = (vendedorActual?.kilometraje ?: 0).toString()
+                textPlacas.text = vendedorActual?.placas ?: ""
+                textTituloProximaCarga.text = "Pedido de ${vendedorActual?.nombreCompleto ?: "Vendedor"}"
+                textFechaProximaCarga.text = SimpleDateFormat("dd MMM yyyy HH:mm", Locale.getDefault())
+                    .format(Date(resp.fechaUnix * 1000))
+
+                listaProductos.clear(); revisados.clear()
+                val huella = mutableMapOf<Int, Int>()
+                resp.productos.forEach { m ->
+                    val p = Producto(
+                        id = m.productoId,
+                        nombre = m.nombre,
+                        precio = m.precio,
+                        cantidadSeleccionada = m.cantidad
+                    )
+                    listaProductos.add(p)
+                    huella[p.id] = m.cantidad
+                }
+                pedidoEstadoInicial = huella.toMap()
+                productoAdapter.notifyDataSetChanged()
+                actualizarResumen()
+                Toast.makeText(this@RegistroInventario, "Pedido cargado", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@RegistroInventario, "Error pedido: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun cargarProductosSoloNombrePrecio() {
+        lifecycleScope.launch {
+            try {
+                val prods = withContext(Dispatchers.IO) { ApiClient.api.getProductos() }
+                listaProductos.clear(); revisados.clear()
+                prods.forEach { doc ->
+                    listaProductos.add(Producto(id = doc.id, nombre = doc.nombre, precio = doc.precio))
+                }
+                productoAdapter.notifyDataSetChanged()
+                actualizarResumen()
+                btnCargar.isEnabled = listaProductos.isNotEmpty() && vendedorActual != null
+                if (listaProductos.isEmpty()) {
+                    Toast.makeText(this@RegistroInventario, "No hay productos para mostrar", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@RegistroInventario, "Error productos: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun actualizarPedidoSinProcesar(pedidoId: Int) {
+        if (listaProductos.isEmpty()) {
+            Toast.makeText(this, "No hay productos para actualizar", Toast.LENGTH_SHORT).show(); return
+        }
+        lifecycleScope.launch {
+            try {
+                val cuerpo = UpdatePedidoRequest(
+                    productos = listaProductos.map {
+                        UpdatePedidoItem(productoId = it.id, cantidad = it.cantidadSeleccionada)
+                    }
+                )
+                withContext(Dispatchers.IO) { ApiClient.api.patchPedido(pedidoId, cuerpo) }
+                pedidoEstadoInicial = listaProductos.associate { it.id to it.cantidadSeleccionada }
+                Toast.makeText(this@RegistroInventario, "Pedido actualizado (aún sin procesar)", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@RegistroInventario, "Error al actualizar: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun confirmarCarga() {
+        val v = vendedorActual
+        if (v == null) { Toast.makeText(this, "No hay vendedor asignado", Toast.LENGTH_SHORT).show(); return }
+
+        val hayAlgunoConCantidad = listaProductos.any { it.cantidadSeleccionada > 0 }
+        if (!hayAlgunoConCantidad) {
+            Toast.makeText(this, "Ingresa cantidad en al menos un producto", Toast.LENGTH_SHORT).show(); return
+        }
+
+        val faltanPorMarcar = listaProductos.count { it.id !in revisados }
+        if (faltanPorMarcar > 0) {
+            AlertDialog.Builder(this)
+                .setTitle("Faltan por checar")
+                .setMessage("Te falta checar uno o más productos ($faltanPorMarcar).")
+                .setPositiveButton("Ok", null)
+                .show()
+            return
+        }
+
+        if (pedidoIdArg != null && hayCambiosContraPedidoOriginal()) {
+            AlertDialog.Builder(this)
+                .setTitle("Confirmar actualización")
+                .setMessage("Se detectaron cambios en las cantidades iniciales del pedido.\n¿Deseas confirmar la actualización?")
+                .setPositiveButton("Confirmar") { _, _ -> guardarCargaEnApi() }
+                .setNegativeButton("Cancelar", null)
+                .show()
+        } else {
+            guardarCargaEnApi()
+        }
+    }
+
+    private fun hayCambiosContraPedidoOriginal(): Boolean {
+        val base = pedidoEstadoInicial ?: return false
+        if (base.size != listaProductos.size) return true
+        for (p in listaProductos) {
+            val cantBase = base[p.id]
+            if (cantBase == null || cantBase != p.cantidadSeleccionada) return true
+        }
+        return false
+    }
+
+    private fun guardarCargaEnApi() {
+        val vendedor = vendedorActual ?: run {
+            Toast.makeText(this, "No hay vendedor asignado", Toast.LENGTH_SHORT).show(); return
+        }
+        if (listaProductos.isEmpty()) {
+            Toast.makeText(this, "No hay productos para guardar", Toast.LENGTH_SHORT).show(); return
+        }
+        if (listaProductos.none { it.cantidadSeleccionada > 0 }) {
+            Toast.makeText(this, "Necesitas al menos un producto con cantidad > 0", Toast.LENGTH_SHORT).show(); return
+        }
+
+        lifecycleScope.launch {
+            try {
+                // Si estás editando un pedido y además cambiaste cantidades, primero actualiza:
+                pedidoIdArg?.let { actualizarPedidoSinProcesar(it) }
+
+                val req = CrearCargaRequest(
+                    vendedorId = vendedor.id,
+                    pedidoId   = pedidoIdArg,
+                    productos  = listaProductos.map { CrearCargaItem(id = it.id, cantidad = it.cantidadSeleccionada) }
+                )
+                val resp = withContext(Dispatchers.IO) { ApiClient.api.postConfirmar(req) }
+                Toast.makeText(this@RegistroInventario, "Carga #${resp.id} registrada", Toast.LENGTH_SHORT).show()
+                finish()
+            } catch (e: Exception) {
+                Toast.makeText(this@RegistroInventario, "Error al guardar carga: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // ===== util BT (igual que ya usabas) =====
+
+    private fun checkBluetoothPermission(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        else true
+
+    private fun requestBluetoothPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                REQUEST_BLUETOOTH_PERMISSION
+            )
+        }
+    }
+
+    private fun elegirImpresoraBluetooth(onDeviceSelected: (BluetoothDevice?) -> Unit) {
+        try {
+            val paired = BluetoothAdapter.getDefaultAdapter()?.bondedDevices ?: emptySet()
+            Toast.makeText(this, "Dispositivos: ${paired.map { it.name }}", Toast.LENGTH_LONG).show()
+        } catch (_: SecurityException) {
+            Toast.makeText(this, "Error de permisos Bluetooth", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun actualizarResumen() {
+        val items = listaProductos.count { it.cantidadSeleccionada > 0 }
+        val unidades = listaProductos.sumOf { it.cantidadSeleccionada }
+        textResumenRef?.text = "$items productos • $unidades unidades"
+    }
+
+    private class ProductoAdapter(
+        private val data: MutableList<Producto>,
+        private val revisados: MutableSet<Int>,
+        private val onCantidadCambiada: (() -> Unit)?,
+        private val cantidadInicialProvider: ((Producto) -> Int)?,
+        private val onSolicitarConfirmacionCambio: ((
+            producto: Producto,
+            anterior: Int,
+            nueva: Int,
+            confirmar: () -> Unit,
+            cancelar: () -> Unit
+        ) -> Unit)?
+    ) : RecyclerView.Adapter<ProductoAdapter.VH>() {
+
+        inner class VH(root: View) : RecyclerView.ViewHolder(root) {
+            val tvNombre: TextView = root.findViewById(R.id.tvNombre)
+            val btnMenos: MaterialButton = root.findViewById(R.id.btnMenos)
+            val tvCantidad: TextView = root.findViewById(R.id.tvCantidad)
+            val btnMas: MaterialButton = root.findViewById(R.id.btnMas)
+            val chkListo: MaterialCheckBox = root.findViewById(R.id.chkListo)
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+            val v = android.view.LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_producto, parent, false)
+            return VH(v)
+        }
+
+        override fun getItemCount(): Int = data.size
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val p = data[position]
+            holder.tvNombre.text = p.nombre
+            holder.tvCantidad.text = p.cantidadSeleccionada.toString()
+
+            holder.chkListo.setOnCheckedChangeListener(null)
+            holder.chkListo.isChecked = p.id in revisados
+
+            fun aplicarCambioCantidad(nueva: Int) {
+                if (nueva == p.cantidadSeleccionada) return
+                p.cantidadSeleccionada = nueva
+                holder.tvCantidad.text = nueva.toString()
+                onCantidadCambiada?.invoke()
+            }
+
+            fun pedirConfirmSiSaleDeInicial(propuesta: Int, accionSiConfirma: () -> Unit) {
+                val inicial = cantidadInicialProvider?.invoke(p) ?: 0
+                val anterior = p.cantidadSeleccionada
+                if (onSolicitarConfirmacionCambio != null && anterior == inicial && propuesta != inicial) {
+                    onSolicitarConfirmacionCambio.invoke(
+                        p, anterior, propuesta, { accionSiConfirma() }, { }
+                    )
+                } else accionSiConfirma()
+            }
+
+            holder.btnMenos.setOnClickListener {
+                val propuesta = max(0, p.cantidadSeleccionada - 1)
+                pedirConfirmSiSaleDeInicial(propuesta) { aplicarCambioCantidad(propuesta) }
+            }
+
+            holder.btnMas.setOnClickListener {
+                val propuesta = p.cantidadSeleccionada + 1
+                pedirConfirmSiSaleDeInicial(propuesta) { aplicarCambioCantidad(propuesta) }
+            }
+
+            holder.chkListo.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) revisados.add(p.id) else revisados.remove(p.id)
+            }
+        }
+    }
+}
+
+Listar descargas
+
+package com.example.almapadi
+
+import android.content.Intent
+import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
+import com.google.android.material.textfield.TextInputEditText
+import com.google.gson.annotations.SerializedName
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.GET
+import retrofit2.http.Query
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlin.math.max
+
+// ===============================
+// Retrofit API
+// ===============================
+private const val API_BASE = "http://TU_IP_O_DOMINIO:3001/" // <--- CAMBIA ESTO
+
+interface DescargasApi {
+    @GET("api/cargador/descargas/pendientes")
+    suspend fun listarPendientes(
+        @Query("limit") limit: Int = 200,
+        @Query("offset") offset: Int = 0
+    ): Response<List<DescargaDTO>>
+}
+
+private val api: DescargasApi by lazy {
+    Retrofit.Builder()
+        .baseUrl(API_BASE)
+        .addConverterFactory(GsonConverterFactory.create())
+        .build()
+        .create(DescargasApi::class.java)
+}
+
+// ===============================
+// DTOs que mapean la API
+// ===============================
+data class DescargaDTO(
+    val id: Int,
+    val vendedorUid: String?,
+    val nombreVendedor: String?,
+    val fechaHora: String?,   // ISO
+    val fechaMs: Long?,       // epoch ms (servidor)
+    val productos: List<ItemProductoDTO> = emptyList(),
+    val procesada: Boolean = false,
+    @SerializedName("listaParaConfirmar") val listaParaConfirmar: Boolean = false,
+    val resumenInventario: List<ItemProductoDTO> = emptyList()
+)
+
+data class ItemProductoDTO(
+    val id_producto: Int? = null,
+    val nombre: String? = null,
+    val cantidad: Int? = null,
+    val ventas: Int? = null,
+    val restante: Int? = null
+)
+
+// ===============================
+// Modelo UI (igual idea que tenías)
+// ===============================
+data class CargaResumen(
+    val id: String,
+    val vendedorUid: String,
+    val nombreVendedor: String,
+    val fechaMs: Long?,                    // usamos epoch ms directo
+    val productos: List<ItemProductoDTO>,
+    val procesada: Boolean,
+    val listaParaConfirmar: Boolean,
+    val resumenInventario: List<ItemProductoDTO> = emptyList()
+) {
+    private val base: List<ItemProductoDTO> =
+        if (resumenInventario.isNotEmpty()) resumenInventario else productos
+
+    private val normalizados: List<Triple<String, Int, Pair<Int, Int>?>> by lazy {
+        base.map { m ->
+            val nombre = (m.nombre ?: "").trim().ifBlank { "" }
+            val cantidad = max(0, m.cantidad ?: 0)
+            val ventas = m.ventas
+            val restante = m.restante
+            Triple(
+                nombre,
+                cantidad,
+                if (ventas != null && restante != null) (ventas to max(0, restante)) else null
+            )
+        }
+    }
+
+    val totalItems: Int get() = normalizados.count { it.second > 0 }
+    val totalCantidad: Int get() = normalizados.sumOf { it.second }
+    val totalVentas: Int get() = normalizados.sumOf { it.third?.first ?: 0 }
+    val totalRestante: Int get() = normalizados.sumOf { it.third?.second ?: 0 }
+}
+
+// ===============================
+// Activity: HistorialCargas -> ahora consume HTTP
+// ===============================
+class HistorialCargas : AppCompatActivity() {
+
+    private lateinit var rv: RecyclerView
+    private lateinit var adapter: CargasPendientesAdapter
+    private lateinit var progress: ProgressBar
+    private lateinit var emptyState: View
+    private lateinit var tvVacio: TextView
+    private lateinit var edtBuscar: TextInputEditText
+    private lateinit var swipeRefresh: SwipeRefreshLayout
+
+    // Chips rango
+    private var chipHoy: Chip? = null
+    private var chipSemana: Chip? = null
+    private var chipMes: Chip? = null
+
+    // Oculto
+    private var chipGroupEstado: ChipGroup? = null
+
+    // Data en memoria
+    private var listaOriginal = listOf<CargaResumen>()
+
+    // Filtros
+    private enum class RangoFecha { TODO, HOY, SEMANA, MES }
+    private var rangoSeleccionado: RangoFecha = RangoFecha.TODO
+    private var textoBusqueda: String = ""
+
+    // Auto-refresh en bordes
+    private var isAutoRefreshing = false
+    private var isDragging = false
+    private val AUTO_REFRESH_COOLDOWN_MS = 1200L
+    private var lastEdgeRefreshAt = 0L
+
+    private var fetchJob: Job? = null
+
+    private fun maybeEdgeRefresh() {
+        if (swipeRefresh.isRefreshing || isAutoRefreshing) return
+        val now = System.currentTimeMillis()
+        if (now - lastEdgeRefreshAt < AUTO_REFRESH_COOLDOWN_MS) return
+        isAutoRefreshing = true
+        lastEdgeRefreshAt = now
+        swipeRefresh.isRefreshing = true
+        fetchPendientes()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContentView(R.layout.activity_historial_cargas)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+
+        rv           = findViewById(R.id.rvCargas)
+        progress     = findViewById(R.id.progress)
+        emptyState   = findViewById(R.id.emptyState) ?: findViewById(R.id.tvVacio)
+        tvVacio      = findViewById(R.id.tvVacio)
+        edtBuscar    = findViewById(R.id.edtBuscar)
+        swipeRefresh = findViewById(R.id.swipeRefresh)
+
+        chipHoy         = findViewById(R.id.chipHoy)
+        chipSemana      = findViewById(R.id.chipSemana)
+        chipMes         = findViewById(R.id.chipMes)
+        chipGroupEstado = findViewById(R.id.chipsFiltroEstado)
+        chipGroupEstado?.visibility = View.GONE
+
+        adapter = CargasPendientesAdapter(
+            onOpenCarga = { carga -> abrirConfirmarDescarga(carga.id) }
+        )
+        rv.layoutManager = LinearLayoutManager(this)
+        rv.adapter = adapter
+
+        // Edge refresh: top/bottom
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                isDragging = newState == RecyclerView.SCROLL_STATE_DRAGGING
+            }
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (!isDragging) return
+                if (dy < 0 && !recyclerView.canScrollVertically(-1)) { // top
+                    maybeEdgeRefresh(); return
+                }
+                if (dy > 0 && !recyclerView.canScrollVertically(1)) {  // bottom
+                    maybeEdgeRefresh()
+                }
+            }
+        })
+
+        // Búsqueda por texto
+        edtBuscar.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                textoBusqueda = s?.toString().orEmpty()
+                aplicarFiltros()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        // Chips de rango
+        chipHoy?.setOnClickListener {
+            rangoSeleccionado = if (chipHoy?.isChecked == true) RangoFecha.HOY else RangoFecha.TODO
+            if (chipHoy?.isChecked == true) { chipSemana?.isChecked = false; chipMes?.isChecked = false }
+            aplicarFiltros()
+        }
+        chipSemana?.setOnClickListener {
+            rangoSeleccionado = if (chipSemana?.isChecked == true) RangoFecha.SEMANA else RangoFecha.TODO
+            if (chipSemana?.isChecked == true) { chipHoy?.isChecked = false; chipMes?.isChecked = false }
+            aplicarFiltros()
+        }
+        chipMes?.setOnClickListener {
+            rangoSeleccionado = if (chipMes?.isChecked == true) RangoFecha.MES else RangoFecha.TODO
+            if (chipMes?.isChecked == true) { chipHoy?.isChecked = false; chipSemana?.isChecked = false }
+            aplicarFiltros()
+        }
+
+        // Pull-to-refresh manual
+        swipeRefresh.setOnRefreshListener { fetchPendientes() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        fetchPendientes()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        swipeRefresh.isRefreshing = false
+        isAutoRefreshing = false
+        isDragging = false
+        fetchJob?.cancel()
+    }
+
+    // ===============================
+    // HTTP fetch
+    // ===============================
+    private fun fetchPendientes() {
+        fetchJob?.cancel()
+        progress.visibility = View.VISIBLE
+        mostrarVacio(false)
+
+        fetchJob = lifecycleScope.launch {
+            try {
+                val resp = withContext(Dispatchers.IO) { api.listarPendientes() }
+                if (resp.isSuccessful) {
+                    val body = resp.body().orEmpty()
+                    val mapped = body.map { dto ->
+                        CargaResumen(
+                            id = dto.id.toString(),
+                            vendedorUid = (dto.vendedorUid ?: dto.nombreVendedor ?: "").ifBlank { "desconocido" },
+                            nombreVendedor = dto.nombreVendedor?.trim().orEmpty(),
+                            fechaMs = dto.fechaMs ?: dto.fechaHora?.let { parseIso(it) },
+                            productos = dto.productos,
+                            procesada = dto.procesada,
+                            listaParaConfirmar = dto.listaParaConfirmar,
+                            resumenInventario = dto.resumenInventario
+                        )
+                    }.sortedByDescending { it.fechaMs ?: 0L }
+
+                    listaOriginal = mapped
+                    aplicarFiltros()
+                } else {
+                    listaOriginal = emptyList()
+                    aplicarFiltros()
+                }
+            } catch (ce: CancellationException) {
+                // ignore
+            } catch (e: Exception) {
+                listaOriginal = emptyList()
+                aplicarFiltros()
+            } finally {
+                progress.visibility = View.GONE
+                swipeRefresh.isRefreshing = false
+                isAutoRefreshing = false
+            }
+        }
+    }
+
+    private fun parseIso(iso: String): Long? = try {
+        // java.time sería mejor, pero con SimpleDateFormat basta:
+        // "2025-08-13T17:12:00.000Z" o sin millis
+        javax.xml.bind.DatatypeConverter.parseDateTime(iso).timeInMillis
+    } catch (_: Exception) {
+        null
+    }
+
+    // ===============================
+    // Filtros
+    // ===============================
+    private fun aplicarFiltros() {
+        val query = textoBusqueda.trim().lowercase()
+
+        val filtrada = listaOriginal.filter { c ->
+            fechaEnRango(c.fechaMs, rangoSeleccionado) &&
+            run {
+                if (query.isEmpty()) return@run true
+                val enVendedor = c.nombreVendedor.lowercase().contains(query) ||
+                        c.vendedorUid.lowercase().contains(query)
+                val base = if (c.resumenInventario.isNotEmpty()) c.resumenInventario else c.productos
+                val enProductos = base.any { (it.nombre ?: "").lowercase().contains(query) }
+                enVendedor || enProductos
+            }
+        }
+
+        adapter.submit(filtrada)
+        mostrarVacio(filtrada.isEmpty())
+    }
+
+    private fun fechaEnRango(fechaMs: Long?, rango: RangoFecha): Boolean {
+        if (rango == RangoFecha.TODO || fechaMs == null) return true
+        val cal = Calendar.getInstance().apply { time = Date(fechaMs) }
+        val hoy = Calendar.getInstance()
+
+        fun inicioDelDia(c: Calendar) = c.apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        fun finDelDia(c: Calendar) = c.apply {
+            set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
+        }
+
+        return when (rango) {
+            RangoFecha.HOY -> {
+                val ini = inicioDelDia(hoy.clone() as Calendar).timeInMillis
+                val fin = finDelDia(hoy.clone() as Calendar).timeInMillis
+                fechaMs in ini..fin
+            }
+            RangoFecha.SEMANA -> {
+                val start = hoy.clone() as Calendar
+                start.firstDayOfWeek = Calendar.MONDAY
+                start.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                inicioDelDia(start)
+                val end = hoy.clone() as Calendar
+                end.firstDayOfWeek = Calendar.MONDAY
+                end.set(Calendar.DAY_OF_WEEK, Calendar.SUNDAY)
+                finDelDia(end)
+                fechaMs in start.timeInMillis..end.timeInMillis
+            }
+            RangoFecha.MES -> {
+                val start = hoy.clone() as Calendar
+                start.set(Calendar.DAY_OF_MONTH, 1)
+                inicioDelDia(start)
+                val end = hoy.clone() as Calendar
+                end.set(Calendar.DAY_OF_MONTH, end.getActualMaximum(Calendar.DAY_OF_MONTH))
+                finDelDia(end)
+                fechaMs in start.timeInMillis..end.timeInMillis
+            }
+            else -> true
+        }
+    }
+
+    private fun mostrarVacio(mostrar: Boolean) {
+        emptyState.visibility = if (mostrar) View.VISIBLE else View.GONE
+        rv.visibility = if (mostrar) View.GONE else View.VISIBLE
+        tvVacio.text = if (mostrar) {
+            if (textoBusqueda.isBlank()) "No hay descargas pendientes" else "Sin resultados"
+        } else {
+            ""
+        }
+    }
+
+    private fun abrirConfirmarDescarga(descargaId: String) {
+        val i = Intent(this, Confirmardescarga::class.java)
+        // Si tu Confirmardescarga ya esperaba "cargaId", lo dejamos igual para no romper:
+        i.putExtra("cargaId", descargaId)
+        // o usa "descargaId" si ya lo tienes así:
+        // i.putExtra("descargaId", descargaId)
+        startActivity(i)
+    }
+}
+
+// ===============================
+// Adapter (igual UI que tenías)
+// ===============================
+class CargasPendientesAdapter(
+    private val onOpenCarga: (CargaResumen) -> Unit
+) : RecyclerView.Adapter<CargasPendientesAdapter.VH>() {
+
+    private val lista = mutableListOf<CargaResumen>()
+    private val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+
+    fun submit(nueva: List<CargaResumen>) {
+        lista.clear()
+        lista.addAll(nueva)
+        notifyDataSetChanged()
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val v = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_carga, parent, false)
+        return VH(v)
+    }
+
+    override fun getItemCount(): Int = lista.size
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        holder.bind(lista[position], sdf, onOpenCarga)
+    }
+
+    class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val tvFecha: TextView = itemView.findViewById(R.id.tvFecha)
+        private val tvVendedor: TextView = itemView.findViewById(R.id.tvVendedor)
+        private val btnVer: Button = itemView.findViewById(R.id.btnVer)
+        private val tvResumen: TextView = itemView.findViewById(R.id.tvResumen)
+
+        fun bind(
+            c: CargaResumen,
+            sdf: SimpleDateFormat,
+            onOpen: (CargaResumen) -> Unit
+        ) {
+            tvFecha.text = c.fechaMs?.let { sdf.format(Date(it)) } ?: "—"
+            val vendedorMostrar = c.nombreVendedor.ifBlank { c.vendedorUid }
+            tvVendedor.text = "Vendedor: $vendedorMostrar"
+
+            if (c.resumenInventario.isNotEmpty()) {
+                tvResumen.text = "Items: ${c.totalItems}   Cant: ${c.totalCantidad}   Vend: ${c.totalVentas}   Rest: ${c.totalRestante}"
+            } else {
+                tvResumen.text = "Items: ${c.totalItems}   Cantidad: ${c.totalCantidad}"
+            }
+
+            itemView.setOnClickListener { onOpen(c) }
+            btnVer.setOnClickListener { onOpen(c) }
+        }
+    }
+}
+
+
+Confirmar descarga
+
